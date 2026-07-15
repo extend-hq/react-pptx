@@ -579,6 +579,36 @@ describe('normalized viewer safety and fidelity', () => {
     viewer.destroy();
   });
 
+  it('clips directional arrow presets to their DrawingML silhouettes', async () => {
+    const arrows: ShapeNode[] = ['rightArrow', 'leftArrow', 'upArrow', 'downArrow'].map(
+      (preset, index) => ({
+        ...shape(`arrow-${index}`, ''),
+        geometry: { preset },
+      }),
+    );
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(
+      container,
+      presentationWithSlides(1, arrows),
+    );
+
+    await viewer.renderSlide(0);
+
+    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-0"]')?.style.clipPath).toBe(
+      'polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)',
+    );
+    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-1"]')?.style.clipPath).toContain(
+      'polygon(',
+    );
+    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-2"]')?.style.clipPath).toContain(
+      'polygon(',
+    );
+    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-3"]')?.style.clipPath).toContain(
+      'polygon(',
+    );
+    viewer.destroy();
+  });
+
   it('stretches picture fills and expands source-rectangle crops to the full frame', async () => {
     const documentModel: PresentationDocument = {
       ...presentation,
@@ -682,6 +712,38 @@ describe('normalized viewer safety and fidelity', () => {
     expect(rectangles.every((rectangle) => !rectangle.outerHTML.includes('NaN'))).toBe(true);
     expect(rectangles.map((rectangle) => rectangle.getAttribute('y'))).toEqual(['60', '220']);
     expect(rectangles.map((rectangle) => rectangle.getAttribute('height'))).toEqual(['160', '320']);
+    viewer.destroy();
+  });
+
+  it('preserves the established scale floor for positive-only charts', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'positive-chart',
+              type: 'chart',
+              transform,
+              chartType: 'bar',
+              series: [{ values: [0.25, 0.5] }],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const rectangles = [
+      ...container.querySelectorAll<SVGRectElement>('[data-rpv-node-id="positive-chart"] rect'),
+    ];
+    expect(rectangles.map((rectangle) => rectangle.getAttribute('y'))).toEqual(['425', '310']);
+    expect(rectangles.map((rectangle) => rectangle.getAttribute('height'))).toEqual(['115', '230']);
     viewer.destroy();
   });
 

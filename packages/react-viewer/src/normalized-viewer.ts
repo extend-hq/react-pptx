@@ -313,6 +313,22 @@ function applyGeometry(element: HTMLElement, preset?: string): void {
     case 'chevron':
       element.style.clipPath = 'polygon(0 0, 70% 0, 100% 50%, 70% 100%, 0 100%, 30% 50%)';
       break;
+    case 'rightArrow':
+      element.style.clipPath =
+        'polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)';
+      break;
+    case 'leftArrow':
+      element.style.clipPath =
+        'polygon(25% 0, 25% 25%, 100% 25%, 100% 75%, 25% 75%, 25% 100%, 0 50%)';
+      break;
+    case 'upArrow':
+      element.style.clipPath =
+        'polygon(50% 0, 100% 25%, 75% 25%, 75% 100%, 25% 100%, 25% 25%, 0 25%)';
+      break;
+    case 'downArrow':
+      element.style.clipPath =
+        'polygon(25% 0, 75% 0, 75% 75%, 100% 75%, 50% 100%, 0 75%, 25% 75%)';
+      break;
     case 'pentagon':
       element.style.clipPath = 'polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)';
       break;
@@ -771,11 +787,15 @@ export class NormalizedPresentationViewer {
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.style.width = '100%';
     svg.style.flex = '1 1 auto';
-    const minimum = Math.min(0, ...values);
-    const maximum = Math.max(0, ...values);
+    const hasNegativeValues = values.some((value) => value < 0);
+    const minimum = hasNegativeValues ? Math.min(0, ...values) : 0;
+    // Keep the original PowerPoint-oracle geometry for positive-only charts.
+    // Mixed-sign charts need a real zero baseline, but scaling sub-unit
+    // positive values to the full plot made many existing charts enormous.
+    const maximum = hasNegativeValues ? Math.max(0, ...values) : Math.max(1, ...values);
     const range = maximum - minimum || 1;
-    const plotTop = 60;
-    const plotHeight = 480;
+    const plotTop = hasNegativeValues ? 60 : 80;
+    const plotHeight = hasNegativeValues ? 480 : 460;
     const yPosition = (value: number) => plotTop + ((maximum - value) / range) * plotHeight;
     const zeroY = yPosition(0);
     const pointCount = Math.max(1, ...node.series.map((series) => series.values.length));
