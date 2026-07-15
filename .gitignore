@@ -11,7 +11,9 @@ output/
 .powerpoint-oracle/export-failures.json
 .powerpoint-oracle/pdf/
 .powerpoint-oracle/captures/
+.powerpoint-oracle/captures-*/
 .powerpoint-oracle/results/
+.powerpoint-oracle/results-*/
 .powerpoint-oracle/decks/
 .powerpoint-oracle/references/
 apps/playground/public/*.pptx

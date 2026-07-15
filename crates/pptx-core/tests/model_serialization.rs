@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use pptx_core::{
     ChartSeries, ColorValue, FillStyle, LineStyle, ShapeGeometry, SlideNode, TableCell, TextBullet,
-    TextParagraph, TextRun, Transform, VerticalAlignment,
+    TextParagraph, TextRun, TextSpacing, TextSpacingUnit, Transform, VerticalAlignment,
 };
 use serde_json::json;
 
@@ -23,11 +23,23 @@ fn shape(
         },
         geometry: ShapeGeometry {
             preset: Some("rect".into()),
+            path: None,
         },
         fill,
         line,
         paragraphs: Vec::new(),
         vertical_alignment,
+        text_insets: None,
+        autofit: None,
+        text_rotation: None,
+        vertical_text: None,
+        horizontal_overflow: None,
+        vertical_overflow: None,
+        text_wrap: None,
+        column_count: None,
+        column_spacing: None,
+        right_to_left_columns: None,
+        space_first_last_paragraph: None,
     }
 }
 
@@ -95,6 +107,8 @@ fn image_fields_serialize_to_the_typescript_model_contract() {
             ..Default::default()
         },
         asset_id: "asset-1".into(),
+        crop: None,
+        opacity: None,
         preserve_aspect_ratio: true,
     };
 
@@ -130,6 +144,9 @@ fn structured_nodes_serialize_to_the_typescript_model_contract() {
             fill: None,
             borders: BTreeMap::new(),
             paragraphs: vec![TextParagraph::default()],
+            text_insets: None,
+            vertical_alignment: None,
+            text_rotation: None,
         }]],
         column_widths: vec![100, 200],
         row_heights: vec![50],
@@ -186,27 +203,50 @@ fn rich_text_fields_serialize_to_the_typescript_model_contract() {
             baseline: Some(30.0),
             language: Some("en-US".into()),
             hyperlink: Some("https://example.com".into()),
+            character_spacing_pt: Some(-0.08),
         }],
         alignment: Some("center".into()),
         level: Some(1),
         bullet: Some(TextBullet {
             kind: "character".into(),
             value: Some("*".into()),
+            font_family: None,
+            font_size_pt: None,
+            size_percent: None,
+            start_at: None,
         }),
-        line_spacing: Some(120.0),
-        space_before: Some(6.0),
-        space_after: Some(3.0),
+        line_spacing: Some(TextSpacing {
+            value: 1.2,
+            unit: TextSpacingUnit::Percent,
+        }),
+        space_before: Some(TextSpacing {
+            value: 6.0,
+            unit: TextSpacingUnit::Points,
+        }),
+        space_after: Some(TextSpacing {
+            value: 3.0,
+            unit: TextSpacingUnit::Points,
+        }),
         rtl: Some(true),
+        margin_left_emu: None,
+        indent_emu: None,
     };
 
     let value = serde_json::to_value(paragraph).unwrap();
     assert_eq!(value["alignment"], "center");
-    assert_eq!(value["lineSpacing"], 120.0);
-    assert_eq!(value["spaceBefore"], 6.0);
-    assert_eq!(value["spaceAfter"], 3.0);
+    assert_eq!(
+        value["lineSpacing"],
+        json!({"value": 1.2, "unit": "percent"})
+    );
+    assert_eq!(
+        value["spaceBefore"],
+        json!({"value": 6.0, "unit": "points"})
+    );
+    assert_eq!(value["spaceAfter"], json!({"value": 3.0, "unit": "points"}));
     assert_eq!(value["runs"][0]["fontFamily"], "Aptos");
     assert_eq!(value["runs"][0]["fontSizePt"], 18.0);
     assert_eq!(value["runs"][0]["color"]["value"], "#123456");
     assert_eq!(value["runs"][0]["hyperlink"], "https://example.com");
+    assert_eq!(value["runs"][0]["characterSpacingPt"], -0.08);
     assert!(value["runs"][0].get("font_family").is_none());
 }

@@ -84,65 +84,110 @@ for (const [deckIndex, deck] of manifest.decks.slice(0, limit).entries()) {
     }
 
     const source = resolveCorpusPath(manifestPath, deck.source);
+    const previousSlides = page.locator('.rpv-stage .rpv-normalized-slide');
+    const previousSlideCount = await previousSlides.count();
+    if (previousSlideCount) {
+      await previousSlides.evaluateAll((elements) => {
+        for (const element of elements) element.setAttribute('data-powerpoint-oracle-stale', '');
+      });
+    }
     await page.locator('input[type="file"]').setInputFiles(source);
     await page.getByText(path.basename(source), { exact: true }).waitFor({ timeout: 60_000 });
+    if (previousSlideCount) {
+      await page
+        .locator('[data-powerpoint-oracle-stale]')
+        .first()
+        .waitFor({ state: 'detached', timeout: 60_000 });
+    }
     await page.getByRole('button', { name: 'Single slide' }).click();
+    await page.locator('button[data-active]', { hasText: 'Single slide' }).waitFor();
     const outputDirectory = path.join(captureRoot, deck.id);
     await mkdir(outputDirectory, { recursive: true });
 
-    for (const slide of deck.slides) {
-      const slideNumber = slide.index + 1;
-      const reference = PNG.sync.read(
-        await readFile(resolveCorpusPath(manifestPath, slide.reference)),
-      );
-      await page.getByText(`${slideNumber} / ${deck.slides.length}`, { exact: true }).waitFor();
-      const slideElement = page.locator('.rpv-stage > .rpv-viewport > div > div');
+    const firstSlideElement = page
+      .locator('.rpv-stage .rpv-normalized-slide[data-rpv-slide-index="0"]')
+      .last();
+    await firstSlideElement.waitFor({ state: 'visible', timeout: 60_000 });
+    const firstSlideLabel = (await firstSlideElement.getAttribute('aria-label')) ?? '';
+    const sourceSlideCount = Number(firstSlideLabel.match(/^Slide 1 of (\d+)$/)?.[1]);
+    if (!Number.isInteger(sourceSlideCount) || sourceSlideCount < 1) {
+      throw new Error(`Unable to read source slide count from ${JSON.stringify(firstSlideLabel)}`);
+    }
+    await page.getByText(`1 / ${sourceSlideCount}`, { exact: true }).waitFor();
+
+    let visibleOrdinal = 0;
+    for (let sourceSlideIndex = 0; sourceSlideIndex < sourceSlideCount; sourceSlideIndex += 1) {
+      await page
+        .getByText(`${sourceSlideIndex + 1} / ${sourceSlideCount}`, { exact: true })
+        .waitFor();
+      const slideElement = page
+        .locator(`.rpv-stage .rpv-normalized-slide[data-rpv-slide-index="${sourceSlideIndex}"]`)
+        .last();
       await slideElement.waitFor({ state: 'visible', timeout: 30_000 });
-      const clip = await slideElement.evaluate(
-        async (element, expectedSize) => {
-          await document.fonts.ready;
-          await Promise.all(
-            [...element.querySelectorAll('img')].map((image) =>
-              image.complete
-                ? undefined
-                : new Promise((resolve) => {
-                    image.addEventListener('load', resolve, { once: true });
-                    image.addEventListener('error', resolve, { once: true });
-                  }),
-            ),
+      const hidden = (await slideElement.getAttribute('data-rpv-slide-hidden')) === 'true';
+      if (!hidden) {
+        const slide = deck.slides[visibleOrdinal];
+        if (!slide) {
+          throw new Error(
+            `Viewer exposes more than ${deck.slides.length} visible slide(s); source slide ${sourceSlideIndex + 1} has no oracle reference`,
           );
-          await new Promise((resolve) =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)),
-          );
-          const frame = element.parentElement;
-          const indexWrapper = frame?.parentElement;
-          element.style.transform = 'none';
-          element.style.transformOrigin = 'left top';
-          if (frame) {
-            frame.style.width = `${expectedSize.width}px`;
-            frame.style.height = `${expectedSize.height}px`;
-            frame.style.boxShadow = 'none';
-          }
-          if (indexWrapper) indexWrapper.style.width = 'fit-content';
-          const bounds = element.getBoundingClientRect();
-          return {
-            x: bounds.x,
-            y: bounds.y,
-            width: expectedSize.width,
-            height: expectedSize.height,
-          };
-        },
-        { width: reference.width, height: reference.height },
-      );
-      await page.screenshot({
-        path: path.join(outputDirectory, `slide-${slideNumber}.png`),
-        animations: 'disabled',
-        scale: 'css',
-        clip,
-      });
-      if (slideNumber < deck.slides.length) {
+        }
+        const slideNumber = slide.index + 1;
+        const reference = PNG.sync.read(
+          await readFile(resolveCorpusPath(manifestPath, slide.reference)),
+        );
+        const clip = await slideElement.evaluate(
+          async (element, expectedSize) => {
+            await document.fonts.ready;
+            await Promise.all(
+              [...element.querySelectorAll('img')].map((image) =>
+                image.complete
+                  ? undefined
+                  : new Promise((resolve) => {
+                      image.addEventListener('load', resolve, { once: true });
+                      image.addEventListener('error', resolve, { once: true });
+                    }),
+              ),
+            );
+            await new Promise((resolve) =>
+              requestAnimationFrame(() => requestAnimationFrame(resolve)),
+            );
+            const frame = element.parentElement;
+            const indexWrapper = frame?.parentElement;
+            element.style.transform = 'none';
+            element.style.transformOrigin = 'left top';
+            if (frame) {
+              frame.style.width = `${expectedSize.width}px`;
+              frame.style.height = `${expectedSize.height}px`;
+              frame.style.boxShadow = 'none';
+            }
+            if (indexWrapper) indexWrapper.style.width = 'fit-content';
+            const bounds = element.getBoundingClientRect();
+            return {
+              x: bounds.x,
+              y: bounds.y,
+              width: expectedSize.width,
+              height: expectedSize.height,
+            };
+          },
+          { width: reference.width, height: reference.height },
+        );
+        await page.screenshot({
+          path: path.join(outputDirectory, `slide-${slideNumber}.png`),
+          animations: 'disabled',
+          scale: 'css',
+          clip,
+        });
+        visibleOrdinal += 1;
+      }
+      if (sourceSlideIndex + 1 < sourceSlideCount) {
         await page.getByRole('button', { name: 'Next slide' }).click();
       }
+    }
+    if (visibleOrdinal !== deck.slides.length) {
+      throw new Error(
+        `Viewer exposes ${visibleOrdinal} visible slide(s), but the oracle manifest contains ${deck.slides.length}`,
+      );
     }
   } catch (error) {
     failures.push({

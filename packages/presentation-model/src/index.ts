@@ -68,7 +68,14 @@ export type FillStyle =
       stops: Array<{ position: number; color: ColorValue }>;
     }
   | { type: 'pattern'; preset: string; foreground: ColorValue; background: ColorValue }
-  | { type: 'image'; assetId: string; mode: 'stretch' | 'tile' };
+  | {
+      type: 'image';
+      assetId: string;
+      mode: 'stretch' | 'tile';
+      crop?: { top: number; right: number; bottom: number; left: number };
+      /** Opacity applied to the image fill only, normalized to 0..1. */
+      opacity?: number;
+    };
 
 export interface LineStyle {
   color?: ColorValue;
@@ -88,19 +95,47 @@ export interface TextRun {
   strike?: boolean;
   color?: ColorValue;
   baseline?: number;
+  /** OOXML run character spacing, in points. */
+  characterSpacingPt?: number;
   language?: string;
   hyperlink?: string;
+}
+
+export interface TextSpacing {
+  value: number;
+  /** Percent values are normalized factors: 1 is 100%. */
+  unit: 'points' | 'percent';
 }
 
 export interface TextParagraph {
   runs: TextRun[];
   alignment?: 'left' | 'center' | 'right' | 'justify' | 'distributed';
   level?: number;
-  bullet?: { kind: 'character' | 'number' | 'picture'; value?: string };
-  lineSpacing?: number;
-  spaceBefore?: number;
-  spaceAfter?: number;
+  bullet?: {
+    kind: 'character' | 'number' | 'picture';
+    value?: string;
+    fontFamily?: string;
+    fontSizePt?: number;
+    sizePercent?: number;
+    startAt?: number;
+  };
+  /** Structured values preserve OOXML units; numbers remain accepted for 0.1.x compatibility. */
+  lineSpacing?: TextSpacing | number;
+  spaceBefore?: TextSpacing | number;
+  spaceAfter?: TextSpacing | number;
   rtl?: boolean;
+  /** Exact OOXML paragraph left margin, in EMUs. */
+  marginLeftEmu?: number;
+  /** Exact OOXML first-line or hanging indent, in EMUs. */
+  indentEmu?: number;
+}
+
+export interface TextAutofit {
+  mode: 'none' | 'normal' | 'shape';
+  /** PowerPoint normal-autofit font scale, normalized to 0..1. */
+  fontScale?: number;
+  /** PowerPoint normal-autofit line-spacing reduction, normalized to 0..1. */
+  lineSpacingReduction?: number;
 }
 
 export interface BaseSlideNode {
@@ -122,6 +157,16 @@ export interface ShapeNode extends BaseSlideNode {
   paragraphs?: TextParagraph[];
   verticalAlignment?: 'top' | 'middle' | 'bottom';
   textInsets?: { top: number; right: number; bottom: number; left: number };
+  autofit?: TextAutofit;
+  textRotation?: number;
+  verticalText?: string;
+  horizontalOverflow?: string;
+  verticalOverflow?: string;
+  textWrap?: 'none' | 'square' | (string & {});
+  columnCount?: number;
+  columnSpacing?: number;
+  rightToLeftColumns?: boolean;
+  spaceFirstLastParagraph?: boolean;
 }
 
 export interface ImageNode extends BaseSlideNode {
@@ -143,6 +188,9 @@ export interface TableCell {
   fill?: FillStyle;
   borders?: Partial<Record<'top' | 'right' | 'bottom' | 'left', LineStyle>>;
   paragraphs: TextParagraph[];
+  textInsets?: { top: number; right: number; bottom: number; left: number };
+  verticalAlignment?: 'top' | 'middle' | 'bottom';
+  textRotation?: number;
 }
 
 export interface TableNode extends BaseSlideNode {

@@ -589,7 +589,7 @@ fn node_identity(node: &XmlNode, slide_index: usize, node_index: usize) -> (Stri
 fn color_element(node: &XmlNode) -> Option<&XmlNode> {
     if matches!(
         node.name.as_str(),
-        "srgbClr" | "scrgbClr" | "schemeClr" | "sysClr" | "prstClr"
+        "srgbClr" | "scrgbClr" | "hslClr" | "schemeClr" | "sysClr" | "prstClr"
     ) {
         return Some(node);
     }
@@ -603,6 +603,10 @@ struct ThemeDataInternal {
     colors: BTreeMap<String, String>,
     major_fonts: BTreeMap<String, String>,
     minor_fonts: BTreeMap<String, String>,
+    rels: HashMap<String, String>,
+    fill_styles: Vec<XmlNode>,
+    background_fill_styles: Vec<XmlNode>,
+    line_styles: Vec<XmlNode>,
 }
 
 impl ThemeDataInternal {
@@ -717,28 +721,181 @@ fn rgb_from_hex(value: &str) -> Option<[f64; 3]> {
     ])
 }
 
+fn percentage(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if let Some(value) = value.strip_suffix('%') {
+        return value.trim().parse::<f64>().ok().map(|value| value / 100.0);
+    }
+    value.parse::<f64>().ok().map(|value| value / 100_000.0)
+}
+
+fn rgb_to_hsl(rgb: [f64; 3]) -> [f64; 3] {
+    let [red, green, blue] = rgb.map(|channel| channel / 255.0);
+    let maximum = red.max(green).max(blue);
+    let minimum = red.min(green).min(blue);
+    let luminance = (maximum + minimum) / 2.0;
+    if (maximum - minimum).abs() < f64::EPSILON {
+        return [0.0, 0.0, luminance];
+    }
+    let delta = maximum - minimum;
+    let saturation = if luminance > 0.5 {
+        delta / (2.0 - maximum - minimum)
+    } else {
+        delta / (maximum + minimum)
+    };
+    let hue = if (maximum - red).abs() < f64::EPSILON {
+        (green - blue) / delta + if green < blue { 6.0 } else { 0.0 }
+    } else if (maximum - green).abs() < f64::EPSILON {
+        (blue - red) / delta + 2.0
+    } else {
+        (red - green) / delta + 4.0
+    } / 6.0;
+    [hue, saturation, luminance]
+}
+
+fn hue_channel(p: f64, q: f64, mut value: f64) -> f64 {
+    if value < 0.0 {
+        value += 1.0;
+    }
+    if value > 1.0 {
+        value -= 1.0;
+    }
+    if value < 1.0 / 6.0 {
+        p + (q - p) * 6.0 * value
+    } else if value < 0.5 {
+        q
+    } else if value < 2.0 / 3.0 {
+        p + (q - p) * (2.0 / 3.0 - value) * 6.0
+    } else {
+        p
+    }
+}
+
+fn hsl_to_rgb([hue, saturation, luminance]: [f64; 3]) -> [f64; 3] {
+    if saturation.abs() < f64::EPSILON {
+        return [luminance * 255.0; 3];
+    }
+    let q = if luminance < 0.5 {
+        luminance * (1.0 + saturation)
+    } else {
+        luminance + saturation - luminance * saturation
+    };
+    let p = 2.0 * luminance - q;
+    [
+        hue_channel(p, q, hue + 1.0 / 3.0) * 255.0,
+        hue_channel(p, q, hue) * 255.0,
+        hue_channel(p, q, hue - 1.0 / 3.0) * 255.0,
+    ]
+}
+
+fn angle_degrees(value: &str) -> Option<f64> {
+    value.parse::<f64>().ok().map(|value| value / 60_000.0)
+}
+
+fn srgb_channel_to_linear(channel: f64) -> f64 {
+    let value = (channel / 255.0).clamp(0.0, 1.0);
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_channel_to_srgb(channel: f64) -> f64 {
+    let value = channel.clamp(0.0, 1.0);
+    let encoded = if value <= 0.003_130_8 {
+        value * 12.92
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    };
+    encoded * 255.0
+}
+
 fn transformed_color(value: &str, color: &XmlNode) -> Option<String> {
     let mut rgb = rgb_from_hex(value)?;
     for transform in &color.children {
-        let amount = transform
-            .attr("val")
-            .and_then(|value| value.parse::<f64>().ok())
-            .map(|value| value / 100_000.0);
+        let amount = transform.attr("val").and_then(percentage);
         match (transform.name.as_str(), amount) {
             ("tint", Some(amount)) => {
                 for channel in &mut rgb {
-                    *channel += (255.0 - *channel) * amount;
+                    let linear = srgb_channel_to_linear(*channel);
+                    *channel = linear_channel_to_srgb(linear * amount + (1.0 - amount));
                 }
             }
-            ("shade", Some(amount)) | ("lumMod", Some(amount)) => {
+            ("shade", Some(amount)) => {
                 for channel in &mut rgb {
-                    *channel *= amount;
+                    *channel = linear_channel_to_srgb(srgb_channel_to_linear(*channel) * amount);
                 }
+            }
+            ("lum", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[2] = amount.clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("lumMod", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[2] = (hsl[2] * amount).clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
             }
             ("lumOff", Some(amount)) => {
-                for channel in &mut rgb {
-                    *channel += 255.0 * amount;
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[2] = (hsl[2] + amount).clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("sat", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[1] = amount.clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("satMod", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[1] = (hsl[1] * amount).clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("satOff", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[1] = (hsl[1] + amount).clamp(0.0, 1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("hueMod", Some(amount)) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[0] = (hsl[0] * amount).rem_euclid(1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("red", Some(amount)) => rgb[0] = 255.0 * amount,
+            ("green", Some(amount)) => rgb[1] = 255.0 * amount,
+            ("blue", Some(amount)) => rgb[2] = 255.0 * amount,
+            ("redMod", Some(amount)) => rgb[0] *= amount,
+            ("greenMod", Some(amount)) => rgb[1] *= amount,
+            ("blueMod", Some(amount)) => rgb[2] *= amount,
+            ("redOff", Some(amount)) => rgb[0] += 255.0 * amount,
+            ("greenOff", Some(amount)) => rgb[1] += 255.0 * amount,
+            ("blueOff", Some(amount)) => rgb[2] += 255.0 * amount,
+            ("hue", _) => {
+                if let Some(value) = transform.attr("val").and_then(angle_degrees) {
+                    let mut hsl = rgb_to_hsl(rgb);
+                    hsl[0] = (value / 360.0).rem_euclid(1.0);
+                    rgb = hsl_to_rgb(hsl);
                 }
+            }
+            ("hueOff", _) => {
+                if let Some(value) = transform.attr("val").and_then(angle_degrees) {
+                    let mut hsl = rgb_to_hsl(rgb);
+                    hsl[0] = (hsl[0] + value / 360.0).rem_euclid(1.0);
+                    rgb = hsl_to_rgb(hsl);
+                }
+            }
+            ("comp", _) => {
+                let mut hsl = rgb_to_hsl(rgb);
+                hsl[0] = (hsl[0] + 0.5).rem_euclid(1.0);
+                rgb = hsl_to_rgb(hsl);
+            }
+            ("inv", _) => {
+                rgb = rgb.map(|channel| 255.0 - channel);
+            }
+            ("gray", _) => {
+                let gray = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+                rgb = [gray; 3];
             }
             _ => {}
         }
@@ -751,8 +908,16 @@ fn transformed_color(value: &str, color: &XmlNode) -> Option<String> {
     ))
 }
 
-fn parse_color(node: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<ColorValue> {
+fn parse_color_with_placeholder(
+    node: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+    placeholder: Option<&ColorValue>,
+) -> Option<ColorValue> {
     let color = color_element(node)?;
+    let inherited_alpha = (color.name == "schemeClr" && color.attr("val") == Some("phClr"))
+        .then(|| placeholder.and_then(|value| value.alpha))
+        .flatten()
+        .unwrap_or(1.0);
     let base_value = match color.name.as_str() {
         "srgbClr" => normalized_hex(color.attr("val")?),
         "scrgbClr" => {
@@ -770,28 +935,47 @@ fn parse_color(node: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<Col
                 channel("b")
             ))
         }
+        "hslClr" => {
+            let hue = color.attr("hue").and_then(angle_degrees).unwrap_or(0.0) / 360.0;
+            let saturation = color.attr("sat").and_then(percentage).unwrap_or(0.0);
+            let luminance = color.attr("lum").and_then(percentage).unwrap_or(0.0);
+            let rgb = hsl_to_rgb([hue, saturation, luminance]);
+            Some(format!(
+                "#{:02X}{:02X}{:02X}",
+                rgb[0].round().clamp(0.0, 255.0) as u8,
+                rgb[1].round().clamp(0.0, 255.0) as u8,
+                rgb[2].round().clamp(0.0, 255.0) as u8
+            ))
+        }
         "schemeClr" => {
             let requested = color.attr("val")?;
-            let context = context?;
-            let mapped = context
-                .color_map
-                .get(requested)
-                .map(String::as_str)
-                .unwrap_or(requested);
-            let resolved = context
-                .theme
-                .and_then(|theme| theme.colors.get(mapped))
-                .cloned();
-            if resolved.is_none() {
-                context.diagnostics.warn(
-                    "degraded-rendering",
-                    format!("Theme color {requested} could not be resolved."),
-                    Some("theme-color"),
-                );
+            if requested == "phClr" {
+                placeholder.map(|value| value.value.clone())
+            } else {
+                let context = context?;
+                let mapped = context
+                    .color_map
+                    .get(requested)
+                    .map(String::as_str)
+                    .unwrap_or(requested);
+                let resolved = context
+                    .theme
+                    .and_then(|theme| theme.colors.get(mapped))
+                    .cloned();
+                if resolved.is_none() {
+                    context.diagnostics.warn(
+                        "degraded-rendering",
+                        format!("Theme color {requested} could not be resolved."),
+                        Some("theme-color"),
+                    );
+                }
+                resolved
             }
-            resolved
         }
-        "sysClr" => color.attr("lastClr").and_then(normalized_hex),
+        "sysClr" => color
+            .attr("lastClr")
+            .and_then(normalized_hex)
+            .or_else(|| color.attr("val").and_then(preset_color).map(str::to_owned)),
         "prstClr" => {
             let preset = color.attr("val")?;
             let resolved = preset_color(preset).map(str::to_owned);
@@ -814,7 +998,7 @@ fn parse_color(node: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<Col
         .and_then(|node| node.attr("val"))
         .and_then(|value| value.parse::<f64>().ok())
         .map(|value| (value / 100_000.0).clamp(0.0, 1.0))
-        .unwrap_or(1.0);
+        .unwrap_or(inherited_alpha);
     if let Some(value) = color
         .child("alphaMod")
         .and_then(|node| node.attr("val"))
@@ -833,9 +1017,14 @@ fn parse_color(node: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<Col
     Some(ColorValue { value, alpha })
 }
 
+fn parse_color(node: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<ColorValue> {
+    parse_color_with_placeholder(node, context, None)
+}
+
 fn parse_theme(
     xml: &[u8],
     path: &str,
+    rels: HashMap<String, String>,
     limits: &ParseLimits,
 ) -> Result<ThemeDataInternal, ParseError> {
     let root = parse_xml_tree(xml, limits, path)?;
@@ -866,6 +1055,7 @@ fn parse_theme(
         fonts
     };
     let font_scheme = root.descendant("fontScheme");
+    let format_scheme = root.descendant("fmtScheme");
     Ok(ThemeDataInternal {
         id: path.to_owned(),
         name: root
@@ -875,6 +1065,19 @@ fn parse_theme(
         colors,
         major_fonts: parse_fonts(font_scheme.and_then(|scheme| scheme.child("majorFont"))),
         minor_fonts: parse_fonts(font_scheme.and_then(|scheme| scheme.child("minorFont"))),
+        rels,
+        fill_styles: format_scheme
+            .and_then(|scheme| scheme.child("fillStyleLst"))
+            .map(|list| list.children.clone())
+            .unwrap_or_default(),
+        background_fill_styles: format_scheme
+            .and_then(|scheme| scheme.child("bgFillStyleLst"))
+            .map(|list| list.children.clone())
+            .unwrap_or_default(),
+        line_styles: format_scheme
+            .and_then(|scheme| scheme.child("lnStyleLst"))
+            .map(|list| list.children.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -897,14 +1100,66 @@ fn merge_color_maps(
     result
 }
 
-fn parse_fill(properties: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<FillStyle> {
-    if properties.child("noFill").is_some() {
+fn named_fill<'a>(properties: &'a XmlNode, name: &str) -> Option<&'a XmlNode> {
+    (properties.name == name)
+        .then_some(properties)
+        .or_else(|| properties.child(name))
+}
+
+fn image_crop(fill: &XmlNode) -> Option<crate::ImageCrop> {
+    let source = fill.child("srcRect")?;
+    let edge = |name: &str| {
+        source
+            .attr(name)
+            .and_then(percentage)
+            .unwrap_or(0.0)
+            .clamp(-1.0, 1.0)
+    };
+    let crop = crate::ImageCrop {
+        top: edge("t"),
+        right: edge("r"),
+        bottom: edge("b"),
+        left: edge("l"),
+    };
+    (crop.top != 0.0 || crop.right != 0.0 || crop.bottom != 0.0 || crop.left != 0.0).then_some(crop)
+}
+
+fn parse_blip_fill(fill: &XmlNode, rels: &HashMap<String, String>) -> Option<FillStyle> {
+    let blip = fill.child("blip")?;
+    let relationship = blip.attr("embed").or_else(|| blip.attr("link"))?;
+    let asset_id = rels.get(relationship)?.clone();
+    let opacity = blip
+        .child("alphaModFix")
+        .or_else(|| blip.child("alphaMod"))
+        .and_then(|effect| effect.attr("amt").or_else(|| effect.attr("val")))
+        .and_then(percentage)
+        .map(|value| value.clamp(0.0, 1.0));
+    Some(FillStyle::Image {
+        asset_id,
+        mode: if fill.child("tile").is_some() {
+            crate::FillImageMode::Tile
+        } else {
+            crate::FillImageMode::Stretch
+        },
+        crop: image_crop(fill),
+        opacity,
+    })
+}
+
+fn parse_fill_with_placeholder(
+    properties: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+    rels: &HashMap<String, String>,
+    placeholder: Option<&ColorValue>,
+) -> Option<FillStyle> {
+    if named_fill(properties, "noFill").is_some() {
         return Some(FillStyle::None);
     }
-    if let Some(solid) = properties.child("solidFill") {
-        return parse_color(solid, context).map(|color| FillStyle::Solid { color });
+    if let Some(solid) = named_fill(properties, "solidFill") {
+        return parse_color_with_placeholder(solid, context, placeholder)
+            .map(|color| FillStyle::Solid { color });
     }
-    if let Some(gradient) = properties.child("gradFill") {
+    if let Some(gradient) = named_fill(properties, "gradFill") {
         let stops = gradient
             .child("gsLst")
             .into_iter()
@@ -916,7 +1171,7 @@ fn parse_fill(properties: &XmlNode, context: Option<&ColorContext<'_>>) -> Optio
                         .and_then(|value| value.parse::<f64>().ok())
                         .unwrap_or(0.0)
                         / 100_000.0,
-                    color: parse_color(stop, context)?,
+                    color: parse_color_with_placeholder(stop, context, placeholder)?,
                 })
             })
             .collect::<Vec<_>>();
@@ -929,31 +1184,48 @@ fn parse_fill(properties: &XmlNode, context: Option<&ColorContext<'_>>) -> Optio
             return Some(FillStyle::Gradient { angle, stops });
         }
     }
-    if let Some(pattern) = properties.child("pattFill") {
-        let foreground = parse_color(pattern.child("fgClr")?, context)?;
-        let background = parse_color(pattern.child("bgClr")?, context)?;
+    if let Some(pattern) = named_fill(properties, "pattFill") {
+        let foreground =
+            parse_color_with_placeholder(pattern.child("fgClr")?, context, placeholder)?;
+        let background =
+            parse_color_with_placeholder(pattern.child("bgClr")?, context, placeholder)?;
         return Some(FillStyle::Pattern {
             preset: pattern.attr("prst").unwrap_or("pct5").to_owned(),
             foreground,
             background,
         });
     }
+    if let Some(fill) = named_fill(properties, "blipFill") {
+        return parse_blip_fill(fill, rels);
+    }
     None
 }
 
-fn parse_line_node(line: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<LineStyle> {
+fn parse_fill(
+    properties: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+    rels: &HashMap<String, String>,
+) -> Option<FillStyle> {
+    parse_fill_with_placeholder(properties, context, rels, None)
+}
+
+fn parse_line_node_with_placeholder(
+    line: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+    placeholder: Option<&ColorValue>,
+) -> Option<LineStyle> {
     if line.child("noFill").is_some() {
         return None;
     }
     let color = line
         .child("solidFill")
-        .and_then(|fill| parse_color(fill, context))
+        .and_then(|fill| parse_color_with_placeholder(fill, context, placeholder))
         .or_else(|| {
             line.child("gradFill").and_then(|gradient| {
                 gradient
                     .child("gsLst")
                     .and_then(|list| list.child("gs"))
-                    .and_then(|stop| parse_color(stop, context))
+                    .and_then(|stop| parse_color_with_placeholder(stop, context, placeholder))
             })
         });
     let width = line
@@ -989,6 +1261,48 @@ fn parse_line_node(line: &XmlNode, context: Option<&ColorContext<'_>>) -> Option
     })
 }
 
+fn parse_line_node(line: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<LineStyle> {
+    parse_line_node_with_placeholder(line, context, None)
+}
+
+fn style_matrix_fill(reference: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<FillStyle> {
+    let index = reference.attr("idx")?.parse::<usize>().ok()?;
+    if matches!(index, 0 | 1000) {
+        return Some(FillStyle::None);
+    }
+    let theme = context?.theme?;
+    let placeholder = parse_color(reference, context);
+    let style = if index >= 1001 {
+        theme.background_fill_styles.get(index - 1001)
+    } else {
+        theme.fill_styles.get(index - 1)
+    };
+    style
+        .and_then(|style| {
+            parse_fill_with_placeholder(style, context, &theme.rels, placeholder.as_ref())
+        })
+        .or_else(|| placeholder.map(|color| FillStyle::Solid { color }))
+}
+
+fn style_matrix_line(reference: &XmlNode, context: Option<&ColorContext<'_>>) -> Option<LineStyle> {
+    let index = reference.attr("idx")?.parse::<usize>().ok()?;
+    if index == 0 {
+        return None;
+    }
+    let theme = context?.theme?;
+    let placeholder = parse_color(reference, context);
+    theme
+        .line_styles
+        .get(index - 1)
+        .and_then(|line| parse_line_node_with_placeholder(line, context, placeholder.as_ref()))
+        .or_else(|| {
+            placeholder.map(|color| LineStyle {
+                color: Some(color),
+                ..Default::default()
+            })
+        })
+}
+
 #[derive(Debug, Clone, Default)]
 struct RunStyle {
     font_family: Option<String>,
@@ -1001,6 +1315,7 @@ struct RunStyle {
     baseline: Option<f64>,
     language: Option<String>,
     hyperlink: Option<String>,
+    character_spacing_pt: Option<f64>,
 }
 
 impl RunStyle {
@@ -1035,6 +1350,9 @@ impl RunStyle {
         if other.hyperlink.is_some() {
             self.hyperlink = other.hyperlink;
         }
+        if other.character_spacing_pt.is_some() {
+            self.character_spacing_pt = other.character_spacing_pt;
+        }
         self
     }
 }
@@ -1049,6 +1367,8 @@ fn parse_run_style(
     };
     let font_family = properties
         .child("latin")
+        .or_else(|| properties.child("ea"))
+        .or_else(|| properties.child("cs"))
         .and_then(|node| node.attr("typeface"))
         .and_then(|typeface| {
             colors
@@ -1082,6 +1402,10 @@ fn parse_run_style(
             .map(|value| value / 1_000.0),
         language: properties.attr("lang").map(str::to_owned),
         hyperlink,
+        character_spacing_pt: properties
+            .attr("spc")
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|value| value / 100.0),
     }
 }
 
@@ -1098,6 +1422,7 @@ fn text_run(text: String, style: RunStyle) -> TextRun {
         baseline: style.baseline,
         language: style.language,
         hyperlink: style.hyperlink,
+        character_spacing_pt: style.character_spacing_pt,
     }
 }
 
@@ -1106,10 +1431,12 @@ struct ParagraphStyle {
     alignment: Option<String>,
     level: Option<usize>,
     bullet: Option<Option<crate::TextBullet>>,
-    line_spacing: Option<f64>,
-    space_before: Option<f64>,
-    space_after: Option<f64>,
+    line_spacing: Option<crate::TextSpacing>,
+    space_before: Option<crate::TextSpacing>,
+    space_after: Option<crate::TextSpacing>,
     rtl: Option<bool>,
+    margin_left_emu: Option<i64>,
+    indent_emu: Option<i64>,
 }
 
 impl ParagraphStyle {
@@ -1135,21 +1462,33 @@ impl ParagraphStyle {
         if other.rtl.is_some() {
             self.rtl = other.rtl;
         }
+        if other.margin_left_emu.is_some() {
+            self.margin_left_emu = other.margin_left_emu;
+        }
+        if other.indent_emu.is_some() {
+            self.indent_emu = other.indent_emu;
+        }
         self
     }
 }
 
-fn spacing_value(node: Option<&XmlNode>) -> Option<f64> {
+fn spacing_value(node: Option<&XmlNode>) -> Option<crate::TextSpacing> {
     let node = node?;
     node.child("spcPts")
         .and_then(|value| value.attr("val"))
         .and_then(|value| value.parse::<f64>().ok())
-        .map(|value| value / 100.0)
+        .map(|value| crate::TextSpacing {
+            value: value / 100.0,
+            unit: crate::TextSpacingUnit::Points,
+        })
         .or_else(|| {
             node.child("spcPct")
                 .and_then(|value| value.attr("val"))
-                .and_then(|value| value.parse::<f64>().ok())
-                .map(|value| value / 1_000.0)
+                .and_then(percentage)
+                .map(|value| crate::TextSpacing {
+                    value,
+                    unit: crate::TextSpacingUnit::Percent,
+                })
         })
 }
 
@@ -1168,20 +1507,47 @@ fn parse_paragraph_style(properties: Option<&XmlNode>) -> ParagraphStyle {
         }
         .map(str::to_owned)
     });
+    let bullet_font = properties
+        .child("buFont")
+        .and_then(|font| font.attr("typeface"))
+        .map(str::to_owned);
+    let bullet_size_pt = properties
+        .child("buSzPts")
+        .and_then(|size| size.attr("val"))
+        .and_then(|value| value.parse::<f64>().ok())
+        .map(|value| value / 100.0);
+    let bullet_size_percent = properties
+        .child("buSzPct")
+        .and_then(|size| size.attr("val"))
+        .and_then(percentage);
     let bullet = if let Some(character) = properties.child("buChar") {
         Some(Some(crate::TextBullet {
             kind: "character".into(),
             value: character.attr("char").map(str::to_owned),
+            font_family: bullet_font.clone(),
+            font_size_pt: bullet_size_pt,
+            size_percent: bullet_size_percent,
+            start_at: None,
         }))
     } else if let Some(number) = properties.child("buAutoNum") {
         Some(Some(crate::TextBullet {
             kind: "number".into(),
             value: number.attr("type").map(str::to_owned),
+            font_family: bullet_font.clone(),
+            font_size_pt: bullet_size_pt,
+            size_percent: bullet_size_percent,
+            start_at: number
+                .attr("startAt")
+                .and_then(|value| value.parse::<usize>().ok()),
         }))
     } else if properties.child("buBlip").is_some() {
         Some(Some(crate::TextBullet {
             kind: "picture".into(),
             value: None,
+            font_family: bullet_font,
+            font_size_pt: bullet_size_pt,
+            size_percent: bullet_size_percent,
+            start_at: None,
         }))
     } else if properties.child("buNone").is_some() {
         Some(None)
@@ -1198,6 +1564,12 @@ fn parse_paragraph_style(properties: Option<&XmlNode>) -> ParagraphStyle {
         space_before: spacing_value(properties.child("spcBef")),
         space_after: spacing_value(properties.child("spcAft")),
         rtl: properties.attr("rtl").and_then(bool_value),
+        margin_left_emu: properties
+            .attr("marL")
+            .and_then(|value| value.parse::<i64>().ok()),
+        indent_emu: properties
+            .attr("indent")
+            .and_then(|value| value.parse::<i64>().ok()),
     }
 }
 
@@ -1219,7 +1591,18 @@ fn fallback_paragraph_properties(
 }
 
 fn style_level_properties(style: Option<&XmlNode>, level: usize) -> Option<&XmlNode> {
-    style.and_then(|style| style.child(&format!("lvl{}pPr", level.saturating_add(1))))
+    style.and_then(|style| {
+        style
+            .child(&format!("lvl{}pPr", level.saturating_add(1)))
+            .or_else(|| style.child("defPPr"))
+    })
+}
+
+struct TextParseContext<'a, 'color> {
+    presentation_text_style: Option<&'a XmlNode>,
+    shape_default_style: RunStyle,
+    colors: Option<&'a ColorContext<'color>>,
+    rels: &'a HashMap<String, String>,
 }
 
 fn parse_text_paragraphs(
@@ -1227,8 +1610,7 @@ fn parse_text_paragraphs(
     layout_text_body: Option<&XmlNode>,
     master_text_body: Option<&XmlNode>,
     master_text_style: Option<&XmlNode>,
-    colors: Option<&ColorContext<'_>>,
-    rels: &HashMap<String, String>,
+    context: &TextParseContext<'_, '_>,
 ) -> Vec<TextParagraph> {
     let Some(text_body) = text_body else {
         return Vec::new();
@@ -1251,33 +1633,44 @@ fn parse_text_paragraphs(
                 })
                 .unwrap_or(0);
             let master_style_properties = style_level_properties(master_text_style, level);
+            let presentation_style_properties =
+                style_level_properties(context.presentation_text_style, level);
             let master_properties =
                 fallback_paragraph_properties(master_text_body, paragraph_index, level);
             let layout_properties =
                 fallback_paragraph_properties(layout_text_body, paragraph_index, level);
-            let paragraph_style = parse_paragraph_style(master_style_properties)
+            let paragraph_style = parse_paragraph_style(presentation_style_properties)
+                .overlay(parse_paragraph_style(master_style_properties))
                 .overlay(parse_paragraph_style(master_properties))
                 .overlay(parse_paragraph_style(layout_properties))
                 .overlay(parse_paragraph_style(own_properties));
+            // Presentation defaults are the base of the cascade. An explicit
+            // shape or table-cell style must override them, not vice versa.
             let default_style = parse_run_style(
-                master_style_properties.and_then(|properties| properties.child("defRPr")),
-                colors,
-                rels,
+                presentation_style_properties.and_then(|properties| properties.child("defRPr")),
+                context.colors,
+                context.rels,
             )
+            .overlay(context.shape_default_style.clone())
+            .overlay(parse_run_style(
+                master_style_properties.and_then(|properties| properties.child("defRPr")),
+                context.colors,
+                context.rels,
+            ))
             .overlay(parse_run_style(
                 master_properties.and_then(|properties| properties.child("defRPr")),
-                colors,
-                rels,
+                context.colors,
+                context.rels,
             ))
             .overlay(parse_run_style(
                 layout_properties.and_then(|properties| properties.child("defRPr")),
-                colors,
-                rels,
+                context.colors,
+                context.rels,
             ))
             .overlay(parse_run_style(
                 own_properties.and_then(|properties| properties.child("defRPr")),
-                colors,
-                rels,
+                context.colors,
+                context.rels,
             ));
             let mut runs = Vec::new();
             for child in &paragraph.children {
@@ -1285,8 +1678,8 @@ fn parse_text_paragraphs(
                     "r" | "fld" => {
                         let style = default_style.clone().overlay(parse_run_style(
                             child.child("rPr"),
-                            colors,
-                            rels,
+                            context.colors,
+                            context.rels,
                         ));
                         let value = child
                             .children_named("t")
@@ -1297,8 +1690,8 @@ fn parse_text_paragraphs(
                     "br" => {
                         let style = default_style.clone().overlay(parse_run_style(
                             child.child("rPr"),
-                            colors,
-                            rels,
+                            context.colors,
+                            context.rels,
                         ));
                         runs.push(text_run("\n".into(), style));
                     }
@@ -1318,20 +1711,109 @@ fn parse_text_paragraphs(
                 space_before: paragraph_style.space_before,
                 space_after: paragraph_style.space_after,
                 rtl: paragraph_style.rtl,
+                margin_left_emu: paragraph_style.margin_left_emu,
+                indent_emu: paragraph_style.indent_emu,
             }
         })
         .collect()
 }
 
-fn vertical_alignment(text_body: Option<&XmlNode>) -> Option<VerticalAlignment> {
-    match text_body
-        .and_then(|body| body.child("bodyPr"))
-        .and_then(|properties| properties.attr("anchor"))
-    {
+fn inherited_body_attribute<'a>(bodies: &[Option<&'a XmlNode>], name: &str) -> Option<&'a str> {
+    bodies.iter().find_map(|body| {
+        body.and_then(|body| body.child("bodyPr"))
+            .and_then(|properties| properties.attr(name))
+    })
+}
+
+fn vertical_alignment_from_value(value: Option<&str>) -> Option<VerticalAlignment> {
+    match value {
         Some("ctr") | Some("just") | Some("dist") => Some(VerticalAlignment::Middle),
         Some("b") => Some(VerticalAlignment::Bottom),
         Some("t") => Some(VerticalAlignment::Top),
         _ => None,
+    }
+}
+
+fn inherited_vertical_alignment(bodies: &[Option<&XmlNode>]) -> Option<VerticalAlignment> {
+    vertical_alignment_from_value(inherited_body_attribute(bodies, "anchor"))
+}
+
+fn inherited_text_insets(bodies: &[Option<&XmlNode>]) -> Option<crate::TextInsets> {
+    if bodies.iter().all(Option::is_none) {
+        return None;
+    }
+    let edge = |name: &str, default: i64| {
+        inherited_body_attribute(bodies, name)
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(default)
+    };
+    Some(crate::TextInsets {
+        top: edge("tIns", 45_720),
+        right: edge("rIns", 91_440),
+        bottom: edge("bIns", 45_720),
+        left: edge("lIns", 91_440),
+    })
+}
+
+fn inherited_autofit(bodies: &[Option<&XmlNode>]) -> Option<crate::TextAutofit> {
+    let autofit = bodies.iter().find_map(|body| {
+        let properties = body.and_then(|body| body.child("bodyPr"))?;
+        if properties.child("noAutofit").is_some() {
+            Some(crate::TextAutofit {
+                mode: crate::TextAutoFitMode::None,
+                font_scale: None,
+                line_spacing_reduction: None,
+            })
+        } else if let Some(normal) = properties.child("normAutofit") {
+            Some(crate::TextAutofit {
+                mode: crate::TextAutoFitMode::Normal,
+                font_scale: normal.attr("fontScale").and_then(percentage),
+                line_spacing_reduction: normal.attr("lnSpcReduction").and_then(percentage),
+            })
+        } else if properties.child("spAutoFit").is_some() {
+            Some(crate::TextAutofit {
+                mode: crate::TextAutoFitMode::Shape,
+                font_scale: None,
+                line_spacing_reduction: None,
+            })
+        } else {
+            None
+        }
+    });
+    autofit.or_else(|| {
+        bodies
+            .iter()
+            .any(Option::is_some)
+            .then_some(crate::TextAutofit {
+                mode: crate::TextAutoFitMode::None,
+                font_scale: None,
+                line_spacing_reduction: None,
+            })
+    })
+}
+
+fn shape_font_style(node: Option<&XmlNode>, colors: Option<&ColorContext<'_>>) -> RunStyle {
+    let Some(reference) = node
+        .and_then(|node| node.child("style"))
+        .and_then(|style| style.child("fontRef"))
+    else {
+        return RunStyle::default();
+    };
+    let font_family = match reference.attr("idx") {
+        Some("major") => colors
+            .and_then(|context| context.theme)
+            .and_then(|theme| theme.major_fonts.get("latin"))
+            .cloned(),
+        Some("minor") => colors
+            .and_then(|context| context.theme)
+            .and_then(|theme| theme.minor_fonts.get("latin"))
+            .cloned(),
+        _ => None,
+    };
+    RunStyle {
+        font_family,
+        color: parse_color(reference, colors),
+        ..Default::default()
     }
 }
 
@@ -1442,7 +1924,154 @@ fn inherited_shape_transform(
     transform
 }
 
-fn shape_fill(node: &XmlNode, colors: Option<&ColorContext<'_>>) -> Option<Option<FillStyle>> {
+fn compact_path_number(value: f64) -> String {
+    let mut rendered = format!("{value:.8}");
+    while rendered.contains('.') && rendered.ends_with('0') {
+        rendered.pop();
+    }
+    if rendered.ends_with('.') {
+        rendered.pop();
+    }
+    if rendered == "-0" {
+        "0".into()
+    } else {
+        rendered
+    }
+}
+
+fn custom_path_point(node: &XmlNode) -> Option<(f64, f64)> {
+    Some((
+        node.attr("x")?.parse::<f64>().ok()?,
+        node.attr("y")?.parse::<f64>().ok()?,
+    ))
+}
+
+/// Converts DrawingML custom paths into SVG path data normalized to a 0..1
+/// view box. Most authored freeforms use literal path coordinates; unsupported
+/// guide formulas are skipped instead of degrading the shape to a rectangle.
+fn custom_geometry_path(node: &XmlNode) -> Option<String> {
+    let paths = node.child("spPr")?.child("custGeom")?.child("pathLst")?;
+    let mut output = Vec::new();
+    let mut has_drawn_segment = false;
+    for path in paths.children_named("path") {
+        let width = path
+            .attr("w")
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value > 0.0)?;
+        let height = path
+            .attr("h")
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| *value > 0.0)?;
+        let normalized = |(x, y): (f64, f64)| {
+            format!(
+                "{} {}",
+                compact_path_number(x / width),
+                compact_path_number(y / height)
+            )
+        };
+        let mut current = None;
+        for command in &path.children {
+            match command.name.as_str() {
+                "moveTo" => {
+                    if let Some(point) = command.child("pt").and_then(custom_path_point) {
+                        output.push(format!("M {}", normalized(point)));
+                        current = Some(point);
+                    }
+                }
+                "lnTo" => {
+                    if let Some(point) = command.child("pt").and_then(custom_path_point) {
+                        output.push(format!("L {}", normalized(point)));
+                        current = Some(point);
+                        has_drawn_segment = true;
+                    }
+                }
+                "cubicBezTo" => {
+                    let points = command
+                        .children_named("pt")
+                        .filter_map(custom_path_point)
+                        .collect::<Vec<_>>();
+                    if let [first, second, third] = points.as_slice() {
+                        output.push(format!(
+                            "C {} {} {}",
+                            normalized(*first),
+                            normalized(*second),
+                            normalized(*third)
+                        ));
+                        current = Some(*third);
+                        has_drawn_segment = true;
+                    }
+                }
+                "quadBezTo" => {
+                    let points = command
+                        .children_named("pt")
+                        .filter_map(custom_path_point)
+                        .collect::<Vec<_>>();
+                    if let [first, second] = points.as_slice() {
+                        output.push(format!("Q {} {}", normalized(*first), normalized(*second)));
+                        current = Some(*second);
+                        has_drawn_segment = true;
+                    }
+                }
+                "arcTo" => {
+                    let Some((start_x, start_y)) = current else {
+                        continue;
+                    };
+                    let Some(radius_x) = command
+                        .attr("wR")
+                        .and_then(|value| value.parse::<f64>().ok())
+                    else {
+                        continue;
+                    };
+                    let Some(radius_y) = command
+                        .attr("hR")
+                        .and_then(|value| value.parse::<f64>().ok())
+                    else {
+                        continue;
+                    };
+                    let Some(start_angle) = command.attr("stAng").and_then(angle_degrees) else {
+                        continue;
+                    };
+                    let Some(sweep_angle) = command.attr("swAng").and_then(angle_degrees) else {
+                        continue;
+                    };
+                    let start_radians = start_angle.to_radians();
+                    let end_radians = (start_angle + sweep_angle).to_radians();
+                    let center_x = start_x - radius_x * start_radians.cos();
+                    let center_y = start_y - radius_y * start_radians.sin();
+                    let endpoint = (
+                        center_x + radius_x * end_radians.cos(),
+                        center_y + radius_y * end_radians.sin(),
+                    );
+                    output.push(format!(
+                        "A {} {} 0 {} {} {}",
+                        compact_path_number(radius_x / width),
+                        compact_path_number(radius_y / height),
+                        usize::from(sweep_angle.abs() > 180.0),
+                        usize::from(sweep_angle >= 0.0),
+                        normalized(endpoint)
+                    ));
+                    current = Some(endpoint);
+                    has_drawn_segment = true;
+                }
+                "close" => output.push("Z".into()),
+                _ => {}
+            }
+        }
+    }
+    (has_drawn_segment && !output.is_empty()).then(|| output.join(" "))
+}
+
+fn shape_fill(
+    node: &XmlNode,
+    colors: Option<&ColorContext<'_>>,
+    rels: &HashMap<String, String>,
+) -> Option<Option<FillStyle>> {
+    // The slide already paints its background, so a background-fill shape is
+    // transparent in the normalized composition. Falling through to fillRef
+    // here incorrectly paints it with the theme accent color.
+    if node.attr("useBgFill").and_then(bool_value).unwrap_or(false) {
+        return Some(Some(FillStyle::None));
+    }
     if let Some(properties) = node.child("spPr") {
         let has_fill = [
             "noFill",
@@ -1455,12 +2084,12 @@ fn shape_fill(node: &XmlNode, colors: Option<&ColorContext<'_>>) -> Option<Optio
         .into_iter()
         .any(|name| properties.child(name).is_some());
         if has_fill {
-            return Some(parse_fill(properties, colors));
+            return Some(parse_fill(properties, colors, rels));
         }
     }
     node.child("style")
         .and_then(|style| style.child("fillRef"))
-        .map(|fill| parse_color(fill, colors).map(|color| FillStyle::Solid { color }))
+        .map(|fill| style_matrix_fill(fill, colors))
 }
 
 fn shape_line(node: &XmlNode, colors: Option<&ColorContext<'_>>) -> Option<Option<LineStyle>> {
@@ -1472,12 +2101,7 @@ fn shape_line(node: &XmlNode, colors: Option<&ColorContext<'_>>) -> Option<Optio
     }
     node.child("style")
         .and_then(|style| style.child("lnRef"))
-        .map(|line| {
-            parse_color(line, colors).map(|color| LineStyle {
-                color: Some(color),
-                ..Default::default()
-            })
-        })
+        .map(|line| style_matrix_line(line, colors))
 }
 
 struct NodeParseContext<'a, 'color> {
@@ -1489,6 +2113,10 @@ struct NodeParseContext<'a, 'color> {
     diagnostics: &'a ParseDiagnostics,
     layout_root: Option<&'a XmlNode>,
     master_root: Option<&'a XmlNode>,
+    layout_rels: Option<&'a HashMap<String, String>>,
+    master_rels: Option<&'a HashMap<String, String>>,
+    presentation_text_style: Option<&'a XmlNode>,
+    table_styles: Option<&'a XmlNode>,
 }
 
 fn parse_shape_node(
@@ -1517,24 +2145,37 @@ fn parse_shape_node(
                 .and_then(|geometry| geometry.attr("prst"))
                 .map(str::to_owned)
         });
-    let fill = [Some(node), layout, master]
-        .into_iter()
-        .flatten()
-        .find_map(|shape| shape_fill(shape, context.colors))
-        .flatten();
+    let fill = [
+        (Some(node), Some(context.rels)),
+        (layout, context.layout_rels),
+        (master, context.master_rels),
+    ]
+    .into_iter()
+    .find_map(|(shape, rels)| shape_fill(shape?, context.colors, rels?))
+    .flatten();
     let line = [Some(node), layout, master]
         .into_iter()
         .flatten()
         .find_map(|shape| shape_line(shape, context.colors))
         .flatten();
-    let vertical_alignment = [text_body, layout_text_body, master_text_body]
-        .into_iter()
-        .find_map(vertical_alignment);
+    let text_bodies = [text_body, layout_text_body, master_text_body];
+    let shape_default_style = shape_font_style(master, context.colors)
+        .overlay(shape_font_style(layout, context.colors))
+        .overlay(shape_font_style(Some(node), context.colors));
+    let text_context = TextParseContext {
+        presentation_text_style: context.presentation_text_style,
+        shape_default_style,
+        colors: context.colors,
+        rels: context.rels,
+    };
     SlideNode::Shape {
         id,
         name,
         transform: inherited_shape_transform(node, layout, master),
-        geometry: ShapeGeometry { preset: geometry },
+        geometry: ShapeGeometry {
+            preset: geometry,
+            path: custom_geometry_path(node),
+        },
         fill,
         line,
         paragraphs: parse_text_paragraphs(
@@ -1542,10 +2183,39 @@ fn parse_shape_node(
             layout_text_body,
             master_text_body,
             master_text_style(context.master_root, master_source),
-            context.colors,
-            context.rels,
+            &text_context,
         ),
-        vertical_alignment,
+        vertical_alignment: inherited_vertical_alignment(&text_bodies),
+        text_insets: inherited_text_insets(&text_bodies),
+        autofit: inherited_autofit(&text_bodies),
+        text_rotation: inherited_body_attribute(&text_bodies, "rot").and_then(angle_degrees),
+        vertical_text: inherited_body_attribute(&text_bodies, "vert").map(str::to_owned),
+        horizontal_overflow: inherited_body_attribute(&text_bodies, "horzOverflow")
+            .map(str::to_owned),
+        vertical_overflow: inherited_body_attribute(&text_bodies, "vertOverflow")
+            .map(str::to_owned),
+        text_wrap: text_bodies.iter().any(Option::is_some).then(|| {
+            inherited_body_attribute(&text_bodies, "wrap")
+                .unwrap_or("square")
+                .to_owned()
+        }),
+        column_count: text_bodies.iter().any(Option::is_some).then(|| {
+            inherited_body_attribute(&text_bodies, "numCol")
+                .and_then(|value| value.parse::<usize>().ok())
+                .unwrap_or(1)
+        }),
+        column_spacing: inherited_body_attribute(&text_bodies, "spcCol")
+            .and_then(|value| value.parse::<i64>().ok()),
+        right_to_left_columns: text_bodies.iter().any(Option::is_some).then(|| {
+            inherited_body_attribute(&text_bodies, "rtlCol")
+                .and_then(bool_value)
+                .unwrap_or(false)
+        }),
+        space_first_last_paragraph: text_bodies.iter().any(Option::is_some).then(|| {
+            inherited_body_attribute(&text_bodies, "spcFirstLastPara")
+                .and_then(bool_value)
+                .unwrap_or(false)
+        }),
     }
 }
 
@@ -1555,13 +2225,43 @@ fn parse_image_node(
     context: &NodeParseContext<'_, '_>,
 ) -> SlideNode {
     let (id, name) = node_identity(node, context.slide_index, node_index);
-    let relationship = node
-        .child("blipFill")
-        .and_then(|fill| fill.child("blip"))
-        .and_then(|blip| blip.attr("embed"));
-    let asset_id = relationship
-        .and_then(|relationship| context.rels.get(relationship))
-        .cloned();
+    let layout = context
+        .layout_root
+        .and_then(|root| find_placeholder(root, node));
+    let master_source = layout.unwrap_or(node);
+    let master = context
+        .master_root
+        .and_then(|root| find_placeholder(root, master_source));
+    let resolved_fill = [
+        (Some(node), Some(context.rels)),
+        (layout, context.layout_rels),
+        (master, context.master_rels),
+    ]
+    .into_iter()
+    .find_map(|(source, rels)| {
+        let fill = source?.child("blipFill")?;
+        let relationship = fill
+            .child("blip")?
+            .attr("embed")
+            .or_else(|| fill.child("blip")?.attr("link"))?;
+        let asset_id = rels?.get(relationship)?.clone();
+        Some((fill, asset_id))
+    });
+    let asset_id = resolved_fill.as_ref().map(|(_, asset_id)| asset_id.clone());
+    let crop = resolved_fill
+        .as_ref()
+        .and_then(|(fill, _)| image_crop(fill));
+    let opacity = resolved_fill.as_ref().and_then(|(fill, _)| {
+        fill.child("blip")
+            .and_then(|blip| blip.child("alphaModFix"))
+            .and_then(|effect| effect.attr("amt"))
+            .and_then(percentage)
+            .map(|value| value.clamp(0.0, 1.0))
+    });
+    let preserve_aspect_ratio = resolved_fill
+        .as_ref()
+        .map(|(fill, _)| fill.child("stretch").is_none())
+        .unwrap_or(true);
     if asset_id.is_none() {
         context.diagnostics.warn(
             "missing-asset",
@@ -1572,18 +2272,230 @@ fn parse_image_node(
     SlideNode::Image {
         id,
         name,
-        transform: parse_transform(
-            node.child("spPr")
-                .and_then(|properties| properties.child("xfrm")),
-        ),
+        transform: inherited_shape_transform(node, layout, master),
         asset_id: asset_id.unwrap_or_else(|| "missing-asset".into()),
-        preserve_aspect_ratio: true,
+        crop,
+        opacity,
+        preserve_aspect_ratio,
     }
 }
 
-fn parse_table_cell(cell: &XmlNode, context: &NodeParseContext<'_, '_>) -> TableCell {
+fn selected_table_style<'a>(table: &XmlNode, styles: Option<&'a XmlNode>) -> Option<&'a XmlNode> {
+    let styles = styles?;
+    let requested = table
+        .child("tblPr")
+        .and_then(|properties| properties.child("tableStyleId"))
+        .map(XmlNode::text_content)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| styles.attr("def").map(str::to_owned))?;
+    styles
+        .children_named("tblStyle")
+        .find(|style| style.attr("styleId") == Some(requested.trim()))
+}
+
+fn table_flag(table: &XmlNode, name: &str) -> bool {
+    table
+        .child("tblPr")
+        .and_then(|properties| properties.attr(name))
+        .and_then(bool_value)
+        .unwrap_or(false)
+}
+
+fn table_style_regions<'a>(
+    table: &XmlNode,
+    style: Option<&'a XmlNode>,
+    row_index: usize,
+    column_index: usize,
+    row_count: usize,
+    column_count: usize,
+) -> Vec<&'a XmlNode> {
+    let Some(style) = style else {
+        return Vec::new();
+    };
+    let mut regions = Vec::new();
+    if let Some(region) = style.child("wholeTbl") {
+        regions.push(region);
+    }
+    let first_row = table_flag(table, "firstRow");
+    let last_row = table_flag(table, "lastRow");
+    let first_column = table_flag(table, "firstCol");
+    let last_column = table_flag(table, "lastCol");
+    if table_flag(table, "bandRow") {
+        let band_index = row_index.saturating_sub(usize::from(first_row));
+        let name = if band_index.is_multiple_of(2) {
+            "band1H"
+        } else {
+            "band2H"
+        };
+        if let Some(region) = style.child(name) {
+            regions.push(region);
+        }
+    }
+    if table_flag(table, "bandCol") {
+        let band_index = column_index.saturating_sub(usize::from(first_column));
+        let name = if band_index.is_multiple_of(2) {
+            "band1V"
+        } else {
+            "band2V"
+        };
+        if let Some(region) = style.child(name) {
+            regions.push(region);
+        }
+    }
+    if first_column && column_index == 0 {
+        if let Some(region) = style.child("firstCol") {
+            regions.push(region);
+        }
+    }
+    if last_column && column_index.saturating_add(1) == column_count {
+        if let Some(region) = style.child("lastCol") {
+            regions.push(region);
+        }
+    }
+    if first_row && row_index == 0 {
+        if let Some(region) = style.child("firstRow") {
+            regions.push(region);
+        }
+    }
+    if last_row && row_index.saturating_add(1) == row_count {
+        if let Some(region) = style.child("lastRow") {
+            regions.push(region);
+        }
+    }
+    let corner = match (
+        row_index == 0,
+        row_index.saturating_add(1) == row_count,
+        column_index == 0,
+        column_index.saturating_add(1) == column_count,
+    ) {
+        (true, _, true, _) => Some("nwCell"),
+        (true, _, _, true) => Some("neCell"),
+        (_, true, true, _) => Some("swCell"),
+        (_, true, _, true) => Some("seCell"),
+        _ => None,
+    };
+    if let Some(region) = corner.and_then(|name| style.child(name)) {
+        regions.push(region);
+    }
+    regions
+}
+
+fn table_region_fill(region: &XmlNode, context: &NodeParseContext<'_, '_>) -> Option<FillStyle> {
+    let style = region.child("tcStyle")?;
+    style
+        .child("fill")
+        .and_then(|fill| parse_fill(fill, context.colors, context.rels))
+        .or_else(|| {
+            style
+                .child("fillRef")
+                .and_then(|reference| style_matrix_fill(reference, context.colors))
+        })
+}
+
+fn table_region_text_style(region: &XmlNode, context: &NodeParseContext<'_, '_>) -> RunStyle {
+    let Some(style) = region.child("tcTxStyle") else {
+        return RunStyle::default();
+    };
+    let reference = style.child("fontRef");
+    let font_family = match reference.and_then(|reference| reference.attr("idx")) {
+        Some("major") => context
+            .colors
+            .and_then(|colors| colors.theme)
+            .and_then(|theme| theme.major_fonts.get("latin"))
+            .cloned(),
+        Some("minor") => context
+            .colors
+            .and_then(|colors| colors.theme)
+            .and_then(|theme| theme.minor_fonts.get("latin"))
+            .cloned(),
+        _ => None,
+    };
+    let color = style
+        .children
+        .iter()
+        .find(|child| {
+            matches!(
+                child.name.as_str(),
+                "srgbClr" | "scrgbClr" | "hslClr" | "schemeClr" | "sysClr" | "prstClr"
+            )
+        })
+        .and_then(|color| parse_color(color, context.colors))
+        .or_else(|| reference.and_then(|reference| parse_color(reference, context.colors)));
+    RunStyle {
+        font_family,
+        bold: style.attr("b").and_then(bool_value),
+        italic: style.attr("i").and_then(bool_value),
+        color,
+        ..Default::default()
+    }
+}
+
+fn table_region_borders(
+    region: &XmlNode,
+    context: &NodeParseContext<'_, '_>,
+    row_index: usize,
+    column_index: usize,
+    row_count: usize,
+    column_count: usize,
+) -> BTreeMap<String, LineStyle> {
+    let Some(borders) = region
+        .child("tcStyle")
+        .and_then(|style| style.child("tcBdr"))
+    else {
+        return BTreeMap::new();
+    };
+    let mut result = BTreeMap::new();
+    for (side, interior) in [
+        ("top", (row_index > 0).then_some("insideH")),
+        (
+            "right",
+            (column_index.saturating_add(1) < column_count).then_some("insideV"),
+        ),
+        (
+            "bottom",
+            (row_index.saturating_add(1) < row_count).then_some("insideH"),
+        ),
+        ("left", (column_index > 0).then_some("insideV")),
+    ] {
+        let line = borders
+            .child(side)
+            .or_else(|| interior.and_then(|name| borders.child(name)))
+            .and_then(|container| container.child("ln"))
+            .and_then(|line| parse_line_node(line, context.colors));
+        if let Some(line) = line {
+            result.insert(side.to_owned(), line);
+        }
+    }
+    result
+}
+
+fn parse_table_cell(
+    cell: &XmlNode,
+    context: &NodeParseContext<'_, '_>,
+    regions: &[&XmlNode],
+    row_index: usize,
+    column_index: usize,
+    row_count: usize,
+    column_count: usize,
+) -> TableCell {
     let properties = cell.child("tcPr");
     let mut borders = BTreeMap::new();
+    let mut style_fill = None;
+    let mut text_style = RunStyle::default();
+    for region in regions {
+        if let Some(fill) = table_region_fill(region, context) {
+            style_fill = Some(fill);
+        }
+        borders.extend(table_region_borders(
+            region,
+            context,
+            row_index,
+            column_index,
+            row_count,
+            column_count,
+        ));
+        text_style = text_style.overlay(table_region_text_style(region, context));
+    }
     if let Some(properties) = properties {
         for (element, side) in [
             ("lnT", "top"),
@@ -1599,6 +2511,12 @@ fn parse_table_cell(cell: &XmlNode, context: &NodeParseContext<'_, '_>) -> Table
             }
         }
     }
+    let text_context = TextParseContext {
+        presentation_text_style: context.presentation_text_style,
+        shape_default_style: text_style,
+        colors: context.colors,
+        rels: context.rels,
+    };
     TableCell {
         row_span: cell
             .attr("rowSpan")
@@ -1608,16 +2526,35 @@ fn parse_table_cell(cell: &XmlNode, context: &NodeParseContext<'_, '_>) -> Table
             .attr("gridSpan")
             .and_then(|value| value.parse().ok())
             .filter(|value| *value > 1),
-        fill: properties.and_then(|properties| parse_fill(properties, context.colors)),
+        fill: properties
+            .and_then(|properties| parse_fill(properties, context.colors, context.rels))
+            .or(style_fill),
         borders,
-        paragraphs: parse_text_paragraphs(
-            cell.child("txBody"),
-            None,
-            None,
-            None,
-            context.colors,
-            context.rels,
+        paragraphs: parse_text_paragraphs(cell.child("txBody"), None, None, None, &text_context),
+        text_insets: cell.child("txBody").map(|_| {
+            let value = |name: &str, default: i64| {
+                properties
+                    .and_then(|properties| properties.attr(name))
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .unwrap_or(default)
+            };
+            crate::TextInsets {
+                top: value("marT", 45_720),
+                right: value("marR", 91_440),
+                bottom: value("marB", 45_720),
+                left: value("marL", 91_440),
+            }
+        }),
+        vertical_alignment: vertical_alignment_from_value(
+            properties.and_then(|properties| properties.attr("anchor")),
         ),
+        text_rotation: properties
+            .and_then(|properties| properties.attr("vert"))
+            .and_then(|value| match value {
+                "vert270" => Some(270.0),
+                "vert" | "eaVert" | "wordArtVert" | "wordArtVertRtl" => Some(90.0),
+                _ => None,
+            }),
     }
 }
 
@@ -1635,21 +2572,63 @@ fn parse_table_node(
     context: &NodeParseContext<'_, '_>,
 ) -> SlideNode {
     let (id, name) = node_identity(frame, context.slide_index, node_index);
-    let rows = table
-        .children_named("tr")
-        .map(|row| {
-            row.children_named("tc")
-                .filter(|cell| !is_merge_continuation(cell))
-                .map(|cell| parse_table_cell(cell, context))
-                .collect()
-        })
-        .collect::<Vec<Vec<TableCell>>>();
     let column_widths = table
         .child("tblGrid")
         .into_iter()
         .flat_map(|grid| grid.children_named("gridCol"))
         .filter_map(|column| column.attr("w").and_then(|value| value.parse().ok()))
         .collect();
+    let row_nodes = table.children_named("tr").collect::<Vec<_>>();
+    let row_count = row_nodes.len();
+    let column_count = table
+        .child("tblGrid")
+        .map(|grid| grid.children_named("gridCol").count())
+        .filter(|count| *count > 0)
+        .unwrap_or_else(|| {
+            row_nodes
+                .iter()
+                .map(|row| row.children_named("tc").count())
+                .max()
+                .unwrap_or(0)
+        });
+    let style = selected_table_style(table, context.table_styles);
+    let rows = row_nodes
+        .iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let mut logical_column = 0usize;
+            row.children_named("tc")
+                .filter_map(|cell| {
+                    let column_index = logical_column;
+                    logical_column = logical_column.saturating_add(
+                        cell.attr("gridSpan")
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .unwrap_or(1),
+                    );
+                    if is_merge_continuation(cell) {
+                        return None;
+                    }
+                    let regions = table_style_regions(
+                        table,
+                        style,
+                        row_index,
+                        column_index,
+                        row_count,
+                        column_count,
+                    );
+                    Some(parse_table_cell(
+                        cell,
+                        context,
+                        &regions,
+                        row_index,
+                        column_index,
+                        row_count,
+                        column_count,
+                    ))
+                })
+                .collect()
+        })
+        .collect::<Vec<Vec<TableCell>>>();
     let row_heights = table
         .children_named("tr")
         .filter_map(|row| row.attr("h").and_then(|value| value.parse().ok()))
@@ -1817,6 +2796,365 @@ fn parse_chart_part(
     })
 }
 
+#[derive(Default)]
+struct ParsedSmartArtData {
+    semantic_text: HashMap<String, Vec<TextParagraph>>,
+    semantic_labels: Vec<(String, Vec<TextParagraph>)>,
+    presentation_to_semantic: HashMap<String, String>,
+    drawing_relationship_id: Option<String>,
+    background: Option<FillStyle>,
+}
+
+fn paragraphs_have_text(paragraphs: &[TextParagraph]) -> bool {
+    paragraphs
+        .iter()
+        .any(|paragraph| paragraph.runs.iter().any(|run| !run.text.trim().is_empty()))
+}
+
+fn parse_smartart_data(root: &XmlNode, context: &NodeParseContext<'_, '_>) -> ParsedSmartArtData {
+    let mut parsed = ParsedSmartArtData {
+        drawing_relationship_id: root
+            .descendant("dataModelExt")
+            .and_then(|extension| extension.attr("relId"))
+            .map(str::to_owned),
+        background: root
+            .child("bg")
+            .and_then(|background| parse_fill(background, context.colors, context.rels)),
+        ..Default::default()
+    };
+    let Some(points) = root.child("ptLst") else {
+        return parsed;
+    };
+    for point in points.children_named("pt") {
+        let Some(model_id) = point.attr("modelId") else {
+            continue;
+        };
+        let point_type = point.attr("type");
+        if point_type == Some("pres") {
+            if let Some(semantic_id) = point
+                .child("prSet")
+                .and_then(|properties| properties.attr("presAssocID"))
+            {
+                parsed
+                    .presentation_to_semantic
+                    .insert(model_id.to_owned(), semantic_id.to_owned());
+            }
+            continue;
+        }
+        if matches!(point_type, Some("doc" | "parTrans" | "sibTrans")) {
+            continue;
+        }
+        let text_context = TextParseContext {
+            presentation_text_style: context.presentation_text_style,
+            shape_default_style: RunStyle::default(),
+            colors: context.colors,
+            rels: context.rels,
+        };
+        let paragraphs = parse_text_paragraphs(point.child("t"), None, None, None, &text_context);
+        if paragraphs_have_text(&paragraphs) {
+            parsed
+                .semantic_text
+                .insert(model_id.to_owned(), paragraphs.clone());
+            parsed
+                .semantic_labels
+                .push((model_id.to_owned(), paragraphs));
+        }
+    }
+    parsed
+}
+
+fn smartart_child_transform(frame: &Transform) -> Transform {
+    Transform {
+        x: 0,
+        y: 0,
+        width: frame.width.max(1),
+        height: frame.height.max(1),
+        ..Default::default()
+    }
+}
+
+fn mapped_smartart_text<'a>(
+    model_id: &str,
+    data: &'a ParsedSmartArtData,
+) -> Option<&'a Vec<TextParagraph>> {
+    data.presentation_to_semantic
+        .get(model_id)
+        .and_then(|semantic_id| data.semantic_text.get(semantic_id))
+        .or_else(|| data.semantic_text.get(model_id))
+}
+
+fn parse_materialized_smartart(
+    frame_node: &XmlNode,
+    node_index: usize,
+    drawing_root: &XmlNode,
+    data: &ParsedSmartArtData,
+    context: &NodeParseContext<'_, '_>,
+) -> Option<SlideNode> {
+    let shape_tree = drawing_root.descendant("spTree")?;
+    let (frame_id, frame_name) = node_identity(frame_node, context.slide_index, node_index);
+    let mut children = Vec::new();
+    for (shape_index, shape) in shape_tree.children.iter().enumerate() {
+        if !matches!(shape.name.as_str(), "sp" | "cxnSp") {
+            continue;
+        }
+        let model_id = shape
+            .attr("modelId")
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("shape-{shape_index}"));
+        let mut parsed = parse_shape_node(shape, shape_index, context);
+        if let SlideNode::Shape {
+            id,
+            name,
+            paragraphs,
+            ..
+        } = &mut parsed
+        {
+            *id = format!("{frame_id}:smartart:{model_id}");
+            if name.is_empty() {
+                *name = format!("SmartArt shape {}", shape_index + 1);
+            }
+            if !paragraphs_have_text(paragraphs) {
+                if let Some(mapped) = mapped_smartart_text(&model_id, data) {
+                    *paragraphs = mapped.clone();
+                }
+            }
+        }
+        children.push(parsed);
+    }
+    if children.is_empty() {
+        return None;
+    }
+    let frame = parse_transform(frame_node.child("xfrm"));
+    let drawing_xfrm = shape_tree
+        .child("grpSpPr")
+        .and_then(|properties| properties.child("xfrm"));
+    Some(SlideNode::Group {
+        id: frame_id,
+        name: frame_name,
+        transform: frame.clone(),
+        children,
+        child_transform: parse_child_transform(drawing_xfrm)
+            .or_else(|| Some(smartart_child_transform(&frame))),
+    })
+}
+
+fn normalize_smartart_fallback_text(paragraphs: &mut [TextParagraph]) {
+    for paragraph in paragraphs {
+        paragraph.alignment = Some("center".into());
+        paragraph.bullet = None;
+        paragraph.level = None;
+        paragraph.margin_left_emu = None;
+        paragraph.indent_emu = None;
+        paragraph.line_spacing = None;
+        paragraph.space_before = None;
+        paragraph.space_after = None;
+        for run in &mut paragraph.runs {
+            run.font_size_pt = Some(run.font_size_pt.unwrap_or(12.0).clamp(8.0, 18.0));
+            run.color = Some(ColorValue {
+                value: "#172033".into(),
+                alpha: None,
+            });
+        }
+    }
+}
+
+fn smartart_fallback_group(
+    frame_node: &XmlNode,
+    node_index: usize,
+    data: &ParsedSmartArtData,
+    context: &NodeParseContext<'_, '_>,
+) -> Option<SlideNode> {
+    if data.semantic_labels.is_empty() {
+        return None;
+    }
+    let (frame_id, frame_name) = node_identity(frame_node, context.slide_index, node_index);
+    let frame = parse_transform(frame_node.child("xfrm"));
+    let width = frame.width.max(1);
+    let height = frame.height.max(1);
+    let count = data.semantic_labels.len();
+    let aspect = width as f64 / height as f64;
+    let columns = ((count as f64 * aspect).sqrt().ceil() as usize).clamp(1, count);
+    let rows = count.div_ceil(columns);
+    let gap = (width.min(height) / 40).max(1);
+    let padding = gap.saturating_mul(2);
+    let horizontal_gaps = gap.saturating_mul(columns.saturating_sub(1) as i64);
+    let vertical_gaps = gap.saturating_mul(rows.saturating_sub(1) as i64);
+    let cell_width = width
+        .saturating_sub(padding.saturating_mul(2))
+        .saturating_sub(horizontal_gaps)
+        .max(columns as i64)
+        / columns as i64;
+    let cell_height = height
+        .saturating_sub(padding.saturating_mul(2))
+        .saturating_sub(vertical_gaps)
+        .max(rows as i64)
+        / rows as i64;
+    let mut children =
+        Vec::with_capacity(count.saturating_add(usize::from(data.background.is_some())));
+    if let Some(fill) = data.background.clone() {
+        children.push(SlideNode::Shape {
+            id: format!("{frame_id}:smartart:background"),
+            name: "SmartArt background".into(),
+            transform: smartart_child_transform(&frame),
+            geometry: ShapeGeometry {
+                preset: Some("rect".into()),
+                path: None,
+            },
+            fill: Some(fill),
+            line: None,
+            paragraphs: Vec::new(),
+            vertical_alignment: None,
+            text_insets: None,
+            autofit: None,
+            text_rotation: None,
+            vertical_text: None,
+            horizontal_overflow: None,
+            vertical_overflow: None,
+            text_wrap: None,
+            column_count: None,
+            column_spacing: None,
+            right_to_left_columns: None,
+            space_first_last_paragraph: None,
+        });
+    }
+    for (label_index, (model_id, source_paragraphs)) in data.semantic_labels.iter().enumerate() {
+        let column = label_index % columns;
+        let row = label_index / columns;
+        let mut paragraphs = source_paragraphs.clone();
+        normalize_smartart_fallback_text(&mut paragraphs);
+        let horizontal_inset = (cell_width / 20).max(0);
+        let vertical_inset = (cell_height / 12).max(0);
+        children.push(SlideNode::Shape {
+            id: format!("{frame_id}:smartart:fallback:{model_id}"),
+            name: format!("SmartArt item {}", label_index + 1),
+            transform: Transform {
+                x: padding + column as i64 * (cell_width + gap),
+                y: padding + row as i64 * (cell_height + gap),
+                width: cell_width,
+                height: cell_height,
+                ..Default::default()
+            },
+            geometry: ShapeGeometry {
+                preset: Some("roundRect".into()),
+                path: None,
+            },
+            fill: Some(FillStyle::Solid {
+                color: ColorValue {
+                    value: "#E8EEF8".into(),
+                    alpha: None,
+                },
+            }),
+            line: Some(LineStyle {
+                color: Some(ColorValue {
+                    value: "#5273A8".into(),
+                    alpha: None,
+                }),
+                width: Some(1.0),
+                ..Default::default()
+            }),
+            paragraphs,
+            vertical_alignment: Some(VerticalAlignment::Middle),
+            text_insets: Some(crate::TextInsets {
+                top: vertical_inset,
+                right: horizontal_inset,
+                bottom: vertical_inset,
+                left: horizontal_inset,
+            }),
+            autofit: Some(crate::TextAutofit {
+                mode: crate::TextAutoFitMode::Normal,
+                font_scale: Some(0.85),
+                line_spacing_reduction: Some(0.1),
+            }),
+            text_rotation: None,
+            vertical_text: None,
+            horizontal_overflow: Some("clip".into()),
+            vertical_overflow: Some("clip".into()),
+            text_wrap: Some("square".into()),
+            column_count: Some(1),
+            column_spacing: None,
+            right_to_left_columns: Some(false),
+            space_first_last_paragraph: Some(false),
+        });
+    }
+    context.diagnostics.warn(
+        "degraded-rendering",
+        format!(
+            "SmartArt frame {frame_id} has no materialized drawing; rendered a semantic fallback."
+        ),
+        Some("smartart"),
+    );
+    Some(SlideNode::Group {
+        id: frame_id,
+        name: frame_name,
+        transform: frame.clone(),
+        children,
+        child_transform: Some(smartart_child_transform(&frame)),
+    })
+}
+
+fn parse_smartart_frame(
+    frame_node: &XmlNode,
+    node_index: usize,
+    graphic_data: &XmlNode,
+    context: &NodeParseContext<'_, '_>,
+) -> Result<Option<SlideNode>, ParseError> {
+    let Some(relationships) = graphic_data.descendant("relIds") else {
+        return Ok(None);
+    };
+    let Some(data_relationship_id) = relationships.attr("dm") else {
+        return Ok(None);
+    };
+    let Some(data_path) = context.rels.get(data_relationship_id) else {
+        context.diagnostics.warn(
+            "missing-part",
+            "SmartArt data relationship could not be resolved.",
+            Some("smartart"),
+        );
+        return Ok(None);
+    };
+    let Some(data_xml) = context.related_parts.get(data_path) else {
+        context.diagnostics.warn(
+            "missing-part",
+            format!("SmartArt data part {data_path} is missing."),
+            Some("smartart"),
+        );
+        return Ok(None);
+    };
+    let data_root = parse_xml_tree(data_xml, context.limits, data_path)?;
+    let data = parse_smartart_data(&data_root, context);
+    if let Some(drawing_relationship_id) = data.drawing_relationship_id.as_deref() {
+        if let Some(drawing_path) = context.rels.get(drawing_relationship_id) {
+            if let Some(drawing_xml) = context.related_parts.get(drawing_path) {
+                let drawing_root = parse_xml_tree(drawing_xml, context.limits, drawing_path)?;
+                if let Some(group) = parse_materialized_smartart(
+                    frame_node,
+                    node_index,
+                    &drawing_root,
+                    &data,
+                    context,
+                ) {
+                    return Ok(Some(group));
+                }
+            } else {
+                context.diagnostics.warn(
+                    "missing-part",
+                    format!("SmartArt drawing part {drawing_path} is missing."),
+                    Some("smartart"),
+                );
+            }
+        } else {
+            context.diagnostics.warn(
+                "missing-part",
+                "SmartArt drawing relationship could not be resolved.",
+                Some("smartart"),
+            );
+        }
+    }
+    Ok(smartart_fallback_group(
+        frame_node, node_index, &data, context,
+    ))
+}
+
 fn parse_graphic_frame(
     node: &XmlNode,
     node_index: usize,
@@ -1856,6 +3194,20 @@ fn parse_graphic_frame(
             series: chart.series,
             has_legend: chart.has_legend,
         });
+    }
+    if let Some(smartart) = graphic_data.filter(|value| value.descendant("relIds").is_some()) {
+        if let Some(group) = parse_smartart_frame(node, node_index, smartart, context)? {
+            return Ok(group);
+        }
+    }
+    if let Some(picture) = graphic_data.and_then(|value| value.descendant("pic")) {
+        let mut fallback = parse_image_node(picture, node_index, context);
+        let (frame_id, frame_name) = node_identity(node, context.slide_index, node_index);
+        if let SlideNode::Image { id, name, .. } = &mut fallback {
+            *id = frame_id;
+            *name = frame_name;
+        }
+        return Ok(fallback);
     }
     let (id, name) = node_identity(node, context.slide_index, node_index);
     context.diagnostics.warn(
@@ -1917,16 +3269,19 @@ fn parse_slide_node(
     }
 }
 
-fn part_background(root: &XmlNode, colors: Option<&ColorContext<'_>>) -> Option<FillStyle> {
+fn part_background(
+    root: &XmlNode,
+    colors: Option<&ColorContext<'_>>,
+    rels: &HashMap<String, String>,
+) -> Option<FillStyle> {
     let background = root.child("cSld")?.child("bg")?;
     background
         .child("bgPr")
-        .and_then(|properties| parse_fill(properties, colors))
+        .and_then(|properties| parse_fill(properties, colors, rels))
         .or_else(|| {
             background
                 .child("bgRef")
-                .and_then(|reference| parse_color(reference, colors))
-                .map(|color| FillStyle::Solid { color })
+                .and_then(|reference| style_matrix_fill(reference, colors))
         })
 }
 
@@ -1953,14 +3308,109 @@ fn parse_part_nodes(
     Ok(nodes)
 }
 
+fn parse_decorative_part_nodes(
+    root: &XmlNode,
+    context: &NodeParseContext<'_, '_>,
+) -> Result<Vec<SlideNode>, ParseError> {
+    let mut nodes = Vec::new();
+    let Some(shape_tree) = shape_tree(root) else {
+        return Ok(nodes);
+    };
+    for (node_index, node) in shape_tree.children.iter().enumerate() {
+        if placeholder_key(node).is_some() {
+            continue;
+        }
+        if let Some(node) = parse_slide_node(node, node_index, context)? {
+            nodes.push(node);
+        }
+    }
+    Ok(nodes)
+}
+
+fn prefix_node_ids(node: &mut SlideNode, prefix: &str) {
+    match node {
+        SlideNode::Shape { id, .. }
+        | SlideNode::Image { id, .. }
+        | SlideNode::Table { id, .. }
+        | SlideNode::Chart { id, .. }
+        | SlideNode::Unknown { id, .. } => *id = format!("{prefix}:{id}"),
+        SlideNode::Group { id, children, .. } => {
+            *id = format!("{prefix}:{id}");
+            for child in children {
+                prefix_node_ids(child, prefix);
+            }
+        }
+    }
+}
+
+fn master_shapes_are_visible(root: &XmlNode) -> bool {
+    root.attr("showMasterSp")
+        .and_then(bool_value)
+        .unwrap_or(true)
+}
+
 fn parse_slide(
     root: &XmlNode,
     context: &NodeParseContext<'_, '_>,
 ) -> Result<ParsedSlideContent, ParseError> {
-    let background = [Some(root), context.layout_root, context.master_root]
-        .into_iter()
-        .flatten()
-        .find_map(|part| part_background(part, context.colors));
+    let background = [
+        (Some(root), Some(context.rels)),
+        (context.layout_root, context.layout_rels),
+        (context.master_root, context.master_rels),
+    ]
+    .into_iter()
+    .find_map(|(part, rels)| part_background(part?, context.colors, rels?));
+    let mut nodes = Vec::new();
+    if master_shapes_are_visible(root)
+        && context
+            .layout_root
+            .map(master_shapes_are_visible)
+            .unwrap_or(true)
+    {
+        if let (Some(master), Some(master_rels)) = (context.master_root, context.master_rels) {
+            let master_context = NodeParseContext {
+                slide_index: context.slide_index,
+                rels: master_rels,
+                related_parts: context.related_parts,
+                limits: context.limits,
+                colors: context.colors,
+                diagnostics: context.diagnostics,
+                layout_root: None,
+                master_root: None,
+                layout_rels: None,
+                master_rels: None,
+                presentation_text_style: context.presentation_text_style,
+                table_styles: context.table_styles,
+            };
+            let mut inherited = parse_decorative_part_nodes(master, &master_context)?;
+            for node in &mut inherited {
+                prefix_node_ids(node, "master");
+            }
+            nodes.extend(inherited);
+        }
+    }
+    if let (Some(layout), Some(layout_rels)) = (context.layout_root, context.layout_rels) {
+        let layout_context = NodeParseContext {
+            slide_index: context.slide_index,
+            rels: layout_rels,
+            related_parts: context.related_parts,
+            limits: context.limits,
+            colors: context.colors,
+            diagnostics: context.diagnostics,
+            layout_root: None,
+            master_root: None,
+            layout_rels: None,
+            master_rels: None,
+            presentation_text_style: context.presentation_text_style,
+            table_styles: context.table_styles,
+        };
+        let mut inherited = parse_decorative_part_nodes(layout, &layout_context)?;
+        for node in &mut inherited {
+            prefix_node_ids(node, "layout");
+        }
+        nodes.extend(inherited);
+    }
+    nodes.extend(parse_part_nodes(root, context)?);
     Ok(ParsedSlideContent {
         name: root
             .child("cSld")
@@ -1972,7 +3422,7 @@ fn parse_slide(
             .map(|show| !show)
             .filter(|hidden| *hidden),
         background,
-        nodes: parse_part_nodes(root, context)?,
+        nodes,
     })
 }
 
@@ -2064,10 +3514,16 @@ fn content_type(path: &str) -> String {
         "jpg" | "jpeg" => "image/jpeg",
         "gif" => "image/gif",
         "svg" => "image/svg+xml",
+        "bmp" | "dib" => "image/bmp",
+        "tif" | "tiff" => "image/tiff",
+        "webp" => "image/webp",
+        "ico" => "image/x-icon",
+        "wdp" => "image/vnd.ms-photo",
         "emf" => "image/x-emf",
         "wmf" => "image/x-wmf",
         "mp4" => "video/mp4",
         "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
         _ => "application/octet-stream",
     }
     .into()
@@ -2105,6 +3561,21 @@ fn load_xml_part(
         root,
         rels,
     }))
+}
+
+fn load_theme_part(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+    limits: &ParseLimits,
+) -> Result<Option<ThemeDataInternal>, ParseError> {
+    let Some(xml) = read_entry(archive, path, limits)? else {
+        return Ok(None);
+    };
+    let rels = match read_entry(archive, &relationship_part_path(path), limits)? {
+        Some(xml) => relationships(&xml, path, limits.max_xml_depth)?,
+        None => HashMap::new(),
+    };
+    Ok(Some(parse_theme(&xml, path, rels, limits)?))
 }
 
 fn related_path(rels: &HashMap<String, String>, prefix: &str) -> Option<String> {
@@ -2146,6 +3617,14 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
         .ok_or_else(|| ParseError::Corrupt("missing presentation relationships".into()))?;
     let rels = relationships(&rel_bytes, "ppt/presentation.xml", limits.max_xml_depth)?;
     let (size, slide_paths) = parse_presentation_xml(&presentation, &rels, limits)?;
+    let presentation_root = parse_xml_tree(&presentation, limits, "ppt/presentation.xml")?;
+    let presentation_text_style = presentation_root.child("defaultTextStyle");
+    let table_styles_path =
+        related_path(&rels, "ppt/tableStyles").unwrap_or_else(|| "ppt/tableStyles.xml".to_owned());
+    let table_styles_root = match read_entry(&mut archive, &table_styles_path, limits)? {
+        Some(xml) => Some(parse_xml_tree(&xml, limits, &table_styles_path)?),
+        None => None,
+    };
     let embedded_font_refs = parse_embedded_font_references(&presentation);
     if slide_paths.is_empty() {
         return Err(ParseError::Corrupt(
@@ -2206,9 +3685,9 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
             .and_then(|part| related_path(&part.rels, "ppt/theme/"));
         if let Some(path) = theme_path.as_deref() {
             if !theme_parts.contains_key(path) {
-                match read_entry(&mut archive, path, limits)? {
-                    Some(xml) => {
-                        theme_parts.insert(path.to_owned(), parse_theme(&xml, path, limits)?);
+                match load_theme_part(&mut archive, path, limits)? {
+                    Some(theme) => {
+                        theme_parts.insert(path.to_owned(), theme);
                     }
                     None => document_warnings.push(missing_part_warning(path, Some(index))),
                 }
@@ -2221,7 +3700,9 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
 
         let related_paths = slide_rels
             .values()
-            .filter(|target| target.starts_with("ppt/charts/"))
+            .filter(|target| {
+                target.starts_with("ppt/charts/") || target.starts_with("ppt/diagrams/")
+            })
             .cloned()
             .collect::<Vec<_>>();
         let mut related_parts = HashMap::new();
@@ -2297,6 +3778,10 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 diagnostics: &diagnostics,
                 layout_root: layout.as_ref().map(|part| &part.root),
                 master_root: master.as_ref().map(|part| &part.root),
+                layout_rels: layout.as_ref().map(|part| &part.rels),
+                master_rels: master.as_ref().map(|part| &part.rels),
+                presentation_text_style,
+                table_styles: table_styles_root.as_ref(),
             };
             parse_slide(&slide_root, &context)?
         };
@@ -2360,9 +3845,9 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
         if theme_parts.contains_key(&path) {
             continue;
         }
-        match read_entry(&mut archive, &path, limits)? {
-            Some(xml) => {
-                theme_parts.insert(path.clone(), parse_theme(&xml, &path, limits)?);
+        match load_theme_part(&mut archive, &path, limits)? {
+            Some(theme) => {
+                theme_parts.insert(path.clone(), theme);
             }
             None => document_warnings.push(missing_part_warning(&path, None)),
         }
@@ -2371,6 +3856,7 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
         .values()
         .chain(layout_parts.values())
         .flat_map(|part| part.rels.values())
+        .chain(theme_parts.values().flat_map(|theme| theme.rels.values()))
         .filter(|target| target.starts_with("ppt/media/"))
     {
         asset_paths.insert(target.clone(), target.clone());
@@ -2398,6 +3884,10 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 diagnostics: &diagnostics,
                 layout_root: None,
                 master_root: None,
+                layout_rels: None,
+                master_rels: None,
+                presentation_text_style,
+                table_styles: table_styles_root.as_ref(),
             };
             parse_part_nodes(&part.root, &context)?
         };
@@ -2439,6 +3929,10 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 diagnostics: &diagnostics,
                 layout_root: None,
                 master_root: master.map(|part| &part.root),
+                layout_rels: None,
+                master_rels: master.map(|part| &part.rels),
+                presentation_text_style,
+                table_styles: table_styles_root.as_ref(),
             };
             parse_part_nodes(&part.root, &context)?
         };
@@ -2537,4 +4031,55 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
         warnings: document_warnings,
         metadata,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn xml(value: &[u8]) -> XmlNode {
+        parse_xml_tree(value, &ParseLimits::default(), "test.xml").unwrap()
+    }
+
+    #[test]
+    fn drawingml_tint_and_shade_mix_in_linear_light() {
+        let tinted =
+            xml(br#"<a:srgbClr xmlns:a="a" val="00FF00"><a:tint val="50000"/></a:srgbClr>"#);
+        let shaded =
+            xml(br#"<a:srgbClr xmlns:a="a" val="00FF00"><a:shade val="50000"/></a:srgbClr>"#);
+        assert_eq!(parse_color(&tinted, None).unwrap().value, "#BCFFBC");
+        assert_eq!(parse_color(&shaded, None).unwrap().value, "#00BC00");
+    }
+
+    #[test]
+    fn image_fill_preserves_blip_opacity() {
+        let fill = xml(
+            br#"<a:blipFill xmlns:a="a" xmlns:r="r"><a:blip r:embed="rId1"><a:alphaModFix amt="14000"/></a:blip><a:stretch/></a:blipFill>"#,
+        );
+        let rels = HashMap::from([("rId1".into(), "ppt/media/image.png".into())]);
+        assert!(matches!(
+            parse_blip_fill(&fill, &rels),
+            Some(FillStyle::Image { opacity: Some(value), .. }) if (value - 0.14).abs() < f64::EPSILON
+        ));
+    }
+
+    #[test]
+    fn background_fill_shapes_do_not_fall_through_to_theme_styles() {
+        let shape = xml(br#"<p:sp xmlns:p="p" useBgFill="1"><p:spPr/></p:sp>"#);
+        assert!(matches!(
+            shape_fill(&shape, None, &HashMap::new()),
+            Some(Some(FillStyle::None))
+        ));
+    }
+
+    #[test]
+    fn custom_geometry_is_normalized_as_svg_path_data() {
+        let shape = xml(
+            br#"<p:sp xmlns:p="p" xmlns:a="a"><p:spPr><a:custGeom><a:pathLst><a:path w="200" h="100"><a:moveTo><a:pt x="0" y="0"/></a:moveTo><a:lnTo><a:pt x="200" y="100"/></a:lnTo><a:close/></a:path></a:pathLst></a:custGeom></p:spPr></p:sp>"#,
+        );
+        assert_eq!(
+            custom_geometry_path(&shape).as_deref(),
+            Some("M 0 0 L 1 1 Z")
+        );
+    }
 }

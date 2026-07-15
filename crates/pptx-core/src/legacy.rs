@@ -732,6 +732,8 @@ impl ShapeCollector<'_> {
                 name: format!("Legacy picture {}", parts.spid),
                 transform,
                 asset_id: asset_id.clone(),
+                crop: None,
+                opacity: None,
                 preserve_aspect_ratio: !covers_slide,
             });
             return;
@@ -747,11 +749,23 @@ impl ShapeCollector<'_> {
             transform,
             geometry: ShapeGeometry {
                 preset: Some(shape_preset(parts.shape_type).into()),
+                path: None,
             },
             fill: parts.fill,
             line: parts.line,
             paragraphs,
             vertical_alignment: parts.vertical_alignment,
+            text_insets: None,
+            autofit: None,
+            text_rotation: None,
+            vertical_text: None,
+            horizontal_overflow: None,
+            vertical_overflow: None,
+            text_wrap: None,
+            column_count: None,
+            column_spacing: None,
+            right_to_left_columns: None,
+            space_first_last_paragraph: None,
         });
     }
 
@@ -1033,11 +1047,23 @@ fn normalize_fallback_slide(
             },
             geometry: ShapeGeometry {
                 preset: Some("rect".into()),
+                path: None,
             },
             fill: None,
             line: None,
             paragraphs: paragraphs(&body, font_family),
             vertical_alignment: None,
+            text_insets: None,
+            autofit: None,
+            text_rotation: None,
+            vertical_text: None,
+            horizontal_overflow: None,
+            vertical_overflow: None,
+            text_wrap: None,
+            column_count: None,
+            column_spacing: None,
+            right_to_left_columns: None,
+            space_first_last_paragraph: None,
         })
         .collect();
     PresentationSlide {

@@ -242,6 +242,29 @@ describe('normalized viewer safety and fidelity', () => {
     vi.unstubAllGlobals();
   });
 
+  it('exposes hidden-slide metadata on normalized slide sections', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        { id: 'hidden-slide', index: 0, hidden: true, nodes: [] },
+        { id: 'visible-slide', index: 1, nodes: [] },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-slide-index="0"]')?.dataset.rpvSlideHidden,
+    ).toBe('true');
+
+    await viewer.renderSlide(1);
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-slide-index="1"]')?.dataset.rpvSlideHidden,
+    ).toBe('false');
+    viewer.destroy();
+  });
+
   it('renders only allowlisted model hyperlinks as anchors', async () => {
     const documentModel: PresentationDocument = {
       ...presentation,
@@ -336,9 +359,10 @@ describe('normalized viewer safety and fidelity', () => {
     const maliciousShape = container.querySelector<HTMLElement>(
       '[data-rpv-node-id="malicious-shape"]',
     )!;
+    const maliciousTextBody = maliciousShape.querySelector<HTMLElement>('[data-rpv-text-body]')!;
     expect(slide.style.width).toBe('500px');
     expect(slide.style.height).toBe('300px');
-    expect(maliciousShape.style.padding).toBe('10px 20px 30px 40px');
+    expect(maliciousTextBody.style.padding).toBe('10px 20px 30px 40px');
     expect(`${slide.style.background} ${maliciousShape.style.background}`).not.toMatch(
       /evil|url|var/i,
     );
@@ -348,6 +372,367 @@ describe('normalized viewer safety and fidelity', () => {
     ).toBe('');
     expect(container.querySelector('rect')?.getAttribute('fill')).toBe('#4472c4');
     expect(container.innerHTML).not.toMatch(/attacker|javascript:bad|evil\.example/i);
+    viewer.destroy();
+  });
+
+  it('maps DrawingML text metrics, wrapping, insets, and normal autofit to CSS', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              ...shape('text-layout', ''),
+              autofit: { mode: 'normal', fontScale: 0.8, lineSpacingReduction: 0.1 },
+              textWrap: 'none',
+              spaceFirstLastParagraph: false,
+              paragraphs: [
+                {
+                  runs: [
+                    {
+                      text: 'Scaled text',
+                      fontSizePt: 20,
+                      characterSpacingPt: 1.5,
+                    },
+                  ],
+                  lineSpacing: { unit: 'percent', value: 1 },
+                  spaceBefore: { unit: 'points', value: 9 },
+                  marginLeftEmu: 95_250,
+                  indentEmu: -47_625,
+                },
+                {
+                  runs: [{ text: 'Exact spacing' }],
+                  lineSpacing: { unit: 'points', value: 20 },
+                },
+                {
+                  runs: [{ text: 'Reduced default spacing' }],
+                  spaceAfter: { unit: 'points', value: 7 },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const body = container.querySelector<HTMLElement>('[data-rpv-text-body]')!;
+    const content = container.querySelector<HTMLElement>('[data-rpv-text-content]')!;
+    const textNode = container.querySelector<HTMLElement>('[data-rpv-node-id="text-layout"]')!;
+    const paragraphs = [...container.querySelectorAll<HTMLElement>('[data-rpv-text-paragraph]')];
+    const scaledRun = paragraphs[0]!.querySelector<HTMLElement>('span')!;
+    expect(body.style.padding).toBe('4.8px 9.6px');
+    expect(textNode.style.overflowX).toBe('visible');
+    expect(textNode.style.overflowY).toBe('visible');
+    expect(content.style.whiteSpace).toBe('pre');
+    expect(content.style.overflowWrap).toBe('normal');
+    expect(paragraphs[0]!.style.lineHeight).toBe('1.035');
+    expect(paragraphs[0]!.style.marginTop).toBe('');
+    expect(paragraphs[0]!.style.marginLeft).toBe('10px');
+    expect(paragraphs[0]!.style.textIndent).toBe('-5px');
+    expect(paragraphs[1]!.style.lineHeight).toBe('20pt');
+    expect(paragraphs[2]!.style.lineHeight).toBe('1.035');
+    expect(paragraphs[2]!.style.marginBottom).toBe('');
+    expect(scaledRun.style.fontSize).toBe('16pt');
+    expect(scaledRun.style.letterSpacing).toBe('1.5pt');
+    viewer.destroy();
+  });
+
+  it('grows shape-autofit text boxes and keeps body rotation independent from vertical flow', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              ...shape('growing-text', ''),
+              autofit: { mode: 'shape' },
+              textRotation: 90,
+              paragraphs: [
+                {
+                  bullet: { kind: 'character', value: '•', sizePercent: 0.5 },
+                  runs: [{ text: 'Growing text', fontSizePt: 20 }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const node = container.querySelector<HTMLElement>('[data-rpv-node-id="growing-text"]')!;
+    const body = node.querySelector<HTMLElement>('[data-rpv-text-body]')!;
+    const bullet = node.querySelector<HTMLElement>('[data-rpv-bullet]')!;
+    expect(node.style.height).toBe('auto');
+    expect(node.style.minHeight).toBe(`${(transform.height / presentation.size.heightEmu) * 100}%`);
+    expect(body.style.position).toBe('relative');
+    expect(body.style.transform).toBe('rotate(90deg)');
+    expect(body.style.writingMode).toBe('');
+    expect(bullet.style.fontSize).toBe('10pt');
+    viewer.destroy();
+  });
+
+  it('converts gradient vectors and sorts DrawingML stops by position', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              ...shape('gradient', ''),
+              fill: {
+                type: 'gradient',
+                angle: 90,
+                stops: [
+                  { position: 1, color: { value: '#ffffff' } },
+                  { position: 0, color: { value: '#000000' } },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const background = container.querySelector<HTMLElement>('[data-rpv-node-id="gradient"]')!.style
+      .background;
+    expect(background).toContain('linear-gradient(180deg');
+    expect(background).toMatch(
+      /(?:#000000|rgb\(0, 0, 0\)) 0%.*(?:#ffffff|rgb\(255, 255, 255\)) 100%/i,
+    );
+    viewer.destroy();
+  });
+
+  it('isolates image-fill opacity and renders normalized custom geometry as SVG', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      assets: {
+        picture: {
+          id: 'picture',
+          contentType: 'image/png',
+          byteLength: 1,
+          url: 'data:image/png;base64,AA==',
+        },
+      },
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              ...shape('transparent-fill', 'Foreground text'),
+              fill: {
+                type: 'image',
+                assetId: 'picture',
+                mode: 'stretch',
+                opacity: 0.14,
+              },
+            },
+            {
+              id: 'custom-path',
+              type: 'shape',
+              transform: { ...transform, x: 1_500_000 },
+              geometry: { path: 'M 0 0 L 1 0.5 L 0 1 Z' },
+              fill: { type: 'solid', color: { value: '#ff0000' } },
+              line: { color: { value: '#000000' }, width: 2 },
+              paragraphs: [],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const fillLayer = container.querySelector<HTMLElement>(
+      '[data-rpv-node-id="transparent-fill"] [data-rpv-image-fill]',
+    )!;
+    expect(fillLayer.style.opacity).toBe('0.14');
+    expect(fillLayer.style.backgroundImage).toContain('data:image/png');
+    const svg = container.querySelector<SVGSVGElement>(
+      '[data-rpv-node-id="custom-path"] [data-rpv-custom-geometry]',
+    )!;
+    const path = svg.querySelector('path')!;
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1 1');
+    expect(path.getAttribute('d')).toBe('M 0 0 L 1 0.5 L 0 1 Z');
+    expect(path.style.fill).toMatch(/#ff0000|rgb\(255, 0, 0\)/i);
+    expect(path.style.strokeWidth).toBe('2px');
+    viewer.destroy();
+  });
+
+  it('stretches picture fills and expands source-rectangle crops to the full frame', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      assets: {
+        picture: {
+          id: 'picture',
+          contentType: 'image/png',
+          byteLength: 1,
+          url: 'data:image/png;base64,AA==',
+        },
+      },
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'plain-image',
+              type: 'image',
+              transform,
+              assetId: 'picture',
+              preserveAspectRatio: true,
+            },
+            {
+              id: 'stretched-image',
+              type: 'image',
+              transform: { ...transform, x: 500_000 },
+              assetId: 'picture',
+              preserveAspectRatio: false,
+            },
+            {
+              id: 'cropped-image',
+              type: 'image',
+              transform: { ...transform, x: 1_000_000 },
+              assetId: 'picture',
+              crop: { top: 0.1, right: 0.2, bottom: 0.3, left: 0.25 },
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const plain = container.querySelector<HTMLImageElement>(
+      '[data-rpv-node-id="plain-image"] img',
+    )!;
+    const stretched = container.querySelector<HTMLImageElement>(
+      '[data-rpv-node-id="stretched-image"] img',
+    )!;
+    const cropped = container.querySelector<HTMLImageElement>(
+      '[data-rpv-node-id="cropped-image"] img',
+    )!;
+    expect(plain.style.objectFit).toBe('contain');
+    expect(stretched.style.objectFit).toBe('fill');
+    expect(cropped.style.objectFit).toBe('fill');
+    expect(Number.parseFloat(cropped.style.width)).toBeCloseTo(181.818_181_8);
+    expect(Number.parseFloat(cropped.style.height)).toBeCloseTo(166.666_666_7);
+    expect(Number.parseFloat(cropped.style.left)).toBeCloseTo(-45.454_545_5);
+    expect(Number.parseFloat(cropped.style.top)).toBeCloseTo(-16.666_666_7);
+    viewer.destroy();
+  });
+
+  it('ignores sparse and non-finite chart values instead of emitting invalid SVG geometry', async () => {
+    const unsafeValues = [
+      1,
+      undefined,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      -2,
+    ] as unknown as Array<number | null>;
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'sparse-chart',
+              type: 'chart',
+              transform,
+              chartType: 'bar',
+              series: [{ values: unsafeValues }],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const rectangles = [
+      ...container.querySelectorAll<SVGRectElement>('[data-rpv-node-id="sparse-chart"] rect'),
+    ];
+    expect(rectangles).toHaveLength(2);
+    expect(rectangles.every((rectangle) => !rectangle.outerHTML.includes('NaN'))).toBe(true);
+    expect(rectangles.map((rectangle) => rectangle.getAttribute('y'))).toEqual(['60', '220']);
+    expect(rectangles.map((rectangle) => rectangle.getAttribute('height'))).toEqual(['160', '320']);
+    viewer.destroy();
+  });
+
+  it('applies table-cell text margins, vertical alignment, and rotation', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'table-layout',
+              type: 'table',
+              transform,
+              rowHeights: [500_000],
+              rows: [
+                [
+                  {
+                    verticalAlignment: 'bottom',
+                    textRotation: 270,
+                    textInsets: {
+                      top: 95_250,
+                      right: 190_500,
+                      bottom: 285_750,
+                      left: 381_000,
+                    },
+                    paragraphs: [{ runs: [{ text: 'Rotated cell' }] }],
+                  },
+                ],
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const cell = container.querySelector<HTMLTableCellElement>('td')!;
+    const body = cell.querySelector<HTMLElement>('[data-rpv-table-text-body]')!;
+    expect(cell.style.verticalAlign).toBe('bottom');
+    expect(cell.style.padding).toBe('0px');
+    expect(cell.style.border).toBe('');
+    expect(body.style.padding).toBe('10px 20px 30px 40px');
+    expect(body.style.position).toBe('absolute');
+    expect(body.style.justifyContent).toBe('flex-end');
+    expect(body.style.writingMode).toBe('vertical-rl');
+    expect(body.style.transform).toBe('rotate(180deg)');
     viewer.destroy();
   });
 
@@ -464,7 +849,8 @@ describe('normalized viewer generations and windowing', () => {
     expect(secondNode.contains(highlight)).toBe(false);
     expect(highlight.parentElement).toBe(secondNode.parentElement);
     expect(highlight.style.outline).toContain('#ef8b2c');
-    expect(secondNode.style.overflow).toBe('hidden');
+    expect(secondNode.style.overflowX).toBe('visible');
+    expect(secondNode.style.overflowY).toBe('visible');
     viewer.destroy();
   });
 

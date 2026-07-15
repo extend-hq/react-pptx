@@ -115,12 +115,38 @@ pub enum SlideNode {
         paragraphs: Vec<TextParagraph>,
         #[serde(skip_serializing_if = "Option::is_none")]
         vertical_alignment: Option<VerticalAlignment>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_insets: Option<TextInsets>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        autofit: Option<TextAutofit>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_rotation: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        vertical_text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        horizontal_overflow: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        vertical_overflow: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text_wrap: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        column_count: Option<usize>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        column_spacing: Option<i64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        right_to_left_columns: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        space_first_last_paragraph: Option<bool>,
     },
     Image {
         id: String,
         name: String,
         transform: Transform,
         asset_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        crop: Option<ImageCrop>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        opacity: Option<f64>,
         preserve_aspect_ratio: bool,
     },
     Group {
@@ -172,6 +198,30 @@ pub struct TableCell {
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub borders: BTreeMap<String, LineStyle>,
     pub paragraphs: Vec<TextParagraph>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_insets: Option<TextInsets>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<VerticalAlignment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text_rotation: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextInsets {
+    pub top: i64,
+    pub right: i64,
+    pub bottom: i64,
+    pub left: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageCrop {
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+    pub left: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -190,6 +240,9 @@ pub struct ChartSeries {
 pub struct ShapeGeometry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preset: Option<String>,
+    /// SVG path data normalized to a 0..1 view box for DrawingML custom geometry.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,6 +291,10 @@ pub enum FillStyle {
     Image {
         asset_id: String,
         mode: FillImageMode,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        crop: Option<ImageCrop>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        opacity: Option<f64>,
     },
 }
 
@@ -264,6 +321,24 @@ pub enum VerticalAlignment {
     Bottom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAutoFitMode {
+    None,
+    Normal,
+    Shape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextAutofit {
+    pub mode: TextAutoFitMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_scale: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_spacing_reduction: Option<f64>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextParagraph {
@@ -275,13 +350,31 @@ pub struct TextParagraph {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bullet: Option<TextBullet>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub line_spacing: Option<f64>,
+    pub line_spacing: Option<TextSpacing>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub space_before: Option<f64>,
+    pub space_before: Option<TextSpacing>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub space_after: Option<f64>,
+    pub space_after: Option<TextSpacing>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rtl: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margin_left_emu: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indent_emu: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSpacing {
+    pub value: f64,
+    pub unit: TextSpacingUnit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextSpacingUnit {
+    Points,
+    Percent,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +383,14 @@ pub struct TextBullet {
     pub kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_size_pt: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_percent: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_at: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -316,6 +417,8 @@ pub struct TextRun {
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub character_spacing_pt: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

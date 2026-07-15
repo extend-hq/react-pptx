@@ -17,6 +17,18 @@ import { convertEmfToDataUrl, convertWmfToDataUrl } from 'emf-converter';
 import { OFFICE_FONT_FALLBACKS } from './fonts';
 
 const EMU_PER_CSS_PIXEL = 9_525;
+const DEFAULT_TEXT_HORIZONTAL_INSET_EMU = 91_440;
+const DEFAULT_TEXT_VERTICAL_INSET_EMU = 45_720;
+const POWERPOINT_SINGLE_LINE_HEIGHT = 1.15;
+
+interface TextRenderOptions {
+  fontScale?: number;
+  lineSpacingReduction?: number;
+  textWrap?: string;
+  spaceFirstLastParagraph?: boolean;
+}
+
+type TextSpacingValue = number | { value: number; unit: 'points' | 'percent' };
 
 interface NormalizedViewerCallbacks {
   onSlideChange?: (index: number) => void;
@@ -90,12 +102,18 @@ function fill(fillStyle?: FillStyle): string | undefined {
   if (!fillStyle || fillStyle.type === 'none') return undefined;
   if (fillStyle.type === 'solid') return color(fillStyle.color);
   if (fillStyle.type === 'gradient') {
-    const stops = fillStyle.stops.map((stop) => {
-      const stopColor = color(stop.color);
-      return stopColor ? `${stopColor} ${stop.position * 100}%` : undefined;
-    });
+    const stops = [...fillStyle.stops]
+      .sort((first, second) => first.position - second.position)
+      .map((stop) => {
+        const stopColor = color(stop.color);
+        const position = Math.max(0, Math.min(1, stop.position));
+        return stopColor ? `${stopColor} ${position * 100}%` : undefined;
+      });
     if (stops.some((stop) => !stop)) return undefined;
-    return `linear-gradient(${fillStyle.angle ?? 0}deg, ${stops.join(', ')})`;
+    // DrawingML's 0-degree vector points left-to-right; CSS 90deg does the
+    // same. Both increase clockwise, so the coordinate-system offset is +90.
+    const cssAngle = ((((fillStyle.angle ?? 0) + 90) % 360) + 360) % 360;
+    return `linear-gradient(${cssAngle}deg, ${stops.join(', ')})`;
   }
   if (fillStyle.type === 'pattern') {
     const foreground = color(fillStyle.foreground) ?? 'currentColor';
@@ -120,23 +138,111 @@ function safeHyperlink(raw: string | undefined): string | undefined {
   return value;
 }
 
-function applyText(container: HTMLElement, paragraphs: TextParagraph[]): void {
-  container.style.whiteSpace = 'pre-wrap';
-  container.style.overflowWrap = 'break-word';
-  for (const paragraph of paragraphs) {
+function boundedScale(value: number | undefined): number {
+  return value === undefined || !Number.isFinite(value) ? 1 : Math.max(0.01, Math.min(1, value));
+}
+
+function lineSpacingValue(value: TextSpacingValue, reduction: number): string {
+  if (typeof value === 'object') {
+    if (value.unit === 'points') return `${value.value}pt`;
+    return String(value.value * POWERPOINT_SINGLE_LINE_HEIGHT * (1 - reduction));
+  }
+  // The public model currently carries both OOXML point and percentage spacing
+  // as numbers. Percentage spacing is conventionally 50 or greater; smaller
+  // values are fixed point sizes.
+  return value >= 50 ? `${value * POWERPOINT_SINGLE_LINE_HEIGHT * (1 - reduction)}%` : `${value}pt`;
+}
+
+function paragraphSpacingValue(value: TextSpacingValue): string {
+  if (typeof value === 'object') {
+    return value.unit === 'points'
+      ? `${value.value}pt`
+      : `${value.value * POWERPOINT_SINGLE_LINE_HEIGHT}em`;
+  }
+  // Percentage paragraph spacing is relative to the current line height. CSS
+  // vertical percentage margins are relative to width, so express it in em.
+  return value >= 50 ? `${(value / 100) * POWERPOINT_SINGLE_LINE_HEIGHT}em` : `${value}pt`;
+}
+
+function bulletCharacter(paragraph: TextParagraph, counters: Map<number, number>): string {
+  const bullet = paragraph.bullet;
+  if (!bullet) return '';
+  if (bullet.kind === 'number') {
+    const level = paragraph.level ?? 0;
+    const next = counters.get(level) ?? bullet.startAt ?? 1;
+    counters.set(level, next + 1);
+    for (const key of counters.keys()) if (key > level) counters.delete(key);
+    return `${next}.`;
+  }
+  if (bullet.kind === 'picture') return '•';
+  const value = bullet.value ?? '•';
+  // Wingdings/Symbol private-use bullets have no useful glyph when their
+  // original font is unavailable in a browser. Preserve ordinary Unicode
+  // bullets and use a stable round bullet for private-use code points.
+  return /[\uE000-\uF8FF]/u.test(value) ? '•' : value;
+}
+
+function applyText(
+  container: HTMLElement,
+  paragraphs: TextParagraph[],
+  options: TextRenderOptions = {},
+): void {
+  const fontScale = boundedScale(options.fontScale);
+  const lineSpacingReduction = Math.max(0, Math.min(1, options.lineSpacingReduction ?? 0));
+  const counters = new Map<number, number>();
+  const wraps = !/^(?:none|nowrap)$/i.test(options.textWrap ?? 'square');
+  container.style.whiteSpace = wraps ? 'pre-wrap' : 'pre';
+  container.style.overflowWrap = wraps ? 'break-word' : 'normal';
+  for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
     const line = document.createElement('div');
-    line.style.textAlign = paragraph.alignment ?? 'left';
+    line.dataset.rpvTextParagraph = '';
+    line.style.minWidth = '0';
+    line.style.fontWeight = '400';
+    line.style.lineHeight = String(POWERPOINT_SINGLE_LINE_HEIGHT * (1 - lineSpacingReduction));
+    line.style.textAlign =
+      paragraph.alignment === 'distributed' ? 'justify' : (paragraph.alignment ?? 'left');
+    if (paragraph.alignment === 'distributed') line.style.textAlignLast = 'justify';
     line.style.direction = paragraph.rtl ? 'rtl' : 'ltr';
-    line.style.marginLeft = paragraph.level ? `${paragraph.level * 1.25}em` : '0';
-    if (paragraph.spaceBefore !== undefined) line.style.marginTop = `${paragraph.spaceBefore}pt`;
-    if (paragraph.spaceAfter !== undefined) line.style.marginBottom = `${paragraph.spaceAfter}pt`;
+    line.style.marginLeft =
+      paragraph.marginLeftEmu !== undefined
+        ? `${paragraph.marginLeftEmu / EMU_PER_CSS_PIXEL}px`
+        : paragraph.level
+          ? `${paragraph.level * 1.25}em`
+          : '0';
+    if (paragraph.indentEmu !== undefined) {
+      line.style.textIndent = `${paragraph.indentEmu / EMU_PER_CSS_PIXEL}px`;
+    }
+    if (
+      paragraph.spaceBefore !== undefined &&
+      (options.spaceFirstLastParagraph !== false || paragraphIndex !== 0)
+    ) {
+      line.style.marginTop = paragraphSpacingValue(paragraph.spaceBefore);
+    }
+    if (
+      paragraph.spaceAfter !== undefined &&
+      (options.spaceFirstLastParagraph !== false || paragraphIndex !== paragraphs.length - 1)
+    ) {
+      line.style.marginBottom = paragraphSpacingValue(paragraph.spaceAfter);
+    }
     if (paragraph.lineSpacing !== undefined) {
-      line.style.lineHeight =
-        paragraph.lineSpacing > 10 ? `${paragraph.lineSpacing}%` : String(paragraph.lineSpacing);
+      line.style.lineHeight = lineSpacingValue(paragraph.lineSpacing, lineSpacingReduction);
     }
     if (paragraph.bullet) {
       const marker = document.createElement('span');
-      marker.textContent = `${paragraph.bullet.value ?? '•'} `;
+      marker.dataset.rpvBullet = '';
+      marker.textContent = `${bulletCharacter(paragraph, counters)}\u00a0`;
+      if (paragraph.bullet.fontFamily) marker.style.fontFamily = paragraph.bullet.fontFamily;
+      if (paragraph.bullet.fontSizePt !== undefined) {
+        marker.style.fontSize = `${paragraph.bullet.fontSizePt * fontScale}pt`;
+      } else if (paragraph.bullet.sizePercent !== undefined) {
+        const surroundingSize = paragraph.runs.find(
+          (run) => run.fontSizePt !== undefined,
+        )?.fontSizePt;
+        marker.style.fontSize =
+          surroundingSize !== undefined
+            ? `${surroundingSize * fontScale * paragraph.bullet.sizePercent}pt`
+            : `${paragraph.bullet.sizePercent * 100}%`;
+      }
       marker.setAttribute('aria-hidden', 'true');
       line.append(marker);
     }
@@ -145,7 +251,10 @@ function applyText(container: HTMLElement, paragraphs: TextParagraph[]): void {
       const span = document.createElement(href ? 'a' : 'span');
       span.textContent = run.text;
       if (run.fontFamily) span.style.fontFamily = run.fontFamily;
-      if (run.fontSizePt) span.style.fontSize = `${run.fontSizePt}pt`;
+      if (run.fontSizePt !== undefined) span.style.fontSize = `${run.fontSizePt * fontScale}pt`;
+      if (run.characterSpacingPt !== undefined) {
+        span.style.letterSpacing = `${run.characterSpacingPt}pt`;
+      }
       if (run.bold) span.style.fontWeight = '700';
       if (run.italic) span.style.fontStyle = 'italic';
       const decorations = [
@@ -212,6 +321,68 @@ function applyGeometry(element: HTMLElement, preset?: string): void {
         'polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 94%, 50% 72%, 21% 94%, 32% 57%, 2% 35%, 39% 35%)';
       break;
   }
+}
+
+function applyTextInsets(
+  element: HTMLElement,
+  insets: { top: number; right: number; bottom: number; left: number } | undefined,
+  useBodyDefaults: boolean,
+): void {
+  const resolved =
+    insets ??
+    (useBodyDefaults
+      ? {
+          top: DEFAULT_TEXT_VERTICAL_INSET_EMU,
+          right: DEFAULT_TEXT_HORIZONTAL_INSET_EMU,
+          bottom: DEFAULT_TEXT_VERTICAL_INSET_EMU,
+          left: DEFAULT_TEXT_HORIZONTAL_INSET_EMU,
+        }
+      : undefined);
+  if (!resolved) return;
+  element.style.padding = `${resolved.top / EMU_PER_CSS_PIXEL}px ${resolved.right / EMU_PER_CSS_PIXEL}px ${resolved.bottom / EMU_PER_CSS_PIXEL}px ${resolved.left / EMU_PER_CSS_PIXEL}px`;
+}
+
+function applyTextOrientation(
+  element: HTMLElement,
+  textRotation?: number,
+  verticalText?: string,
+  rotationAsVerticalFlow = false,
+): void {
+  const vertical = verticalText?.toLowerCase();
+  if (vertical && vertical !== 'horz') {
+    element.style.writingMode = vertical.includes('mongolian') ? 'vertical-lr' : 'vertical-rl';
+    element.style.textOrientation = vertical.includes('wordartvert') ? 'upright' : 'mixed';
+  }
+  if (textRotation === undefined || !Number.isFinite(textRotation) || textRotation === 0) return;
+  const normalized = ((textRotation % 360) + 360) % 360;
+  if (rotationAsVerticalFlow && (normalized === 90 || normalized === 270)) {
+    element.style.writingMode = 'vertical-rl';
+    element.style.textOrientation = 'mixed';
+    if (normalized === 270) element.style.transform = 'rotate(180deg)';
+    return;
+  }
+  element.style.transform = `rotate(${textRotation}deg)`;
+  element.style.transformOrigin = 'center';
+}
+
+function allowsTextOverflow(value: string | undefined): boolean {
+  return value === undefined || /overflow/i.test(value);
+}
+
+function applyCroppedImage(
+  image: HTMLImageElement,
+  crop: { top: number; right: number; bottom: number; left: number },
+): void {
+  const horizontal = Math.max(0.000_001, 1 - crop.left - crop.right);
+  const vertical = Math.max(0.000_001, 1 - crop.top - crop.bottom);
+  image.style.position = 'absolute';
+  image.style.maxWidth = 'none';
+  image.style.maxHeight = 'none';
+  image.style.width = `${100 / horizontal}%`;
+  image.style.height = `${100 / vertical}%`;
+  image.style.left = `${(-crop.left / horizontal) * 100}%`;
+  image.style.top = `${(-crop.top / vertical) * 100}%`;
+  image.style.objectFit = 'fill';
 }
 
 function isWordCharacter(value: string | undefined): boolean {
@@ -296,6 +467,7 @@ export class NormalizedPresentationViewer {
   private mountedHandles = new Set<DisposableHandle>();
   private handlesByTarget = new Map<HTMLElement, DisposableHandle>();
   private destroyed = false;
+  private customGeometrySequence = 0;
   private renderGeneration = 0;
   private navigationGeneration = 0;
   private lastNotifiedSlide: number | undefined;
@@ -409,18 +581,139 @@ export class NormalizedPresentationViewer {
 
   private applyFill(element: HTMLElement, fillStyle: FillStyle | undefined, nodeId: string): void {
     if (fillStyle?.type === 'image') {
-      element.style.backgroundRepeat = fillStyle.mode === 'tile' ? 'repeat' : 'no-repeat';
-      element.style.backgroundSize = fillStyle.mode === 'tile' ? 'auto' : '100% 100%';
+      const opacity = Math.max(0, Math.min(1, fillStyle.opacity ?? 1));
+      const target =
+        opacity < 1
+          ? (() => {
+              const layer = document.createElement('div');
+              layer.dataset.rpvImageFill = '';
+              layer.style.position = 'absolute';
+              layer.style.inset = '0';
+              layer.style.pointerEvents = 'none';
+              layer.style.opacity = String(opacity);
+              layer.style.zIndex = '0';
+              if (!element.style.position) element.style.position = 'relative';
+              element.prepend(layer);
+              return layer;
+            })()
+          : element;
+      target.style.backgroundRepeat = fillStyle.mode === 'tile' ? 'repeat' : 'no-repeat';
+      if (fillStyle.mode === 'tile') target.style.backgroundSize = 'auto';
+      else if (fillStyle.crop) {
+        const horizontal = Math.max(0.000_001, 1 - fillStyle.crop.left - fillStyle.crop.right);
+        const vertical = Math.max(0.000_001, 1 - fillStyle.crop.top - fillStyle.crop.bottom);
+        target.style.backgroundSize = `${100 / horizontal}% ${100 / vertical}%`;
+        const horizontalCrop = fillStyle.crop.left + fillStyle.crop.right;
+        const verticalCrop = fillStyle.crop.top + fillStyle.crop.bottom;
+        target.style.backgroundPosition = `${
+          Math.abs(horizontalCrop) > 0.000_001 ? (fillStyle.crop.left / horizontalCrop) * 100 : 50
+        }% ${Math.abs(verticalCrop) > 0.000_001 ? (fillStyle.crop.top / verticalCrop) * 100 : 50}%`;
+      } else {
+        target.style.backgroundSize = '100% 100%';
+      }
       this.applyAsset(
         fillStyle.assetId,
         (url) => {
-          element.style.backgroundImage = `url(${JSON.stringify(url)})`;
+          target.style.backgroundImage = `url(${JSON.stringify(url)})`;
         },
         nodeId,
       );
       return;
     }
     element.style.background = fill(fillStyle) ?? 'transparent';
+  }
+
+  private createCustomGeometry(
+    node: Extract<SlideNode, { type: 'shape' }>,
+  ): SVGSVGElement {
+    const namespace = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(namespace, 'svg');
+    svg.dataset.rpvCustomGeometry = '';
+    svg.setAttribute('viewBox', '0 0 1 1');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.position = 'absolute';
+    svg.style.inset = '0';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    svg.style.overflow = 'visible';
+    svg.style.pointerEvents = 'none';
+
+    const path = document.createElementNS(namespace, 'path');
+    path.setAttribute('d', node.geometry.path ?? '');
+    path.setAttribute('vector-effect', 'non-scaling-stroke');
+    path.style.fill = 'none';
+
+    const fillStyle = node.fill;
+    if (fillStyle?.type === 'solid') {
+      path.style.fill = color(fillStyle.color) ?? 'none';
+    } else if (fillStyle?.type === 'gradient' && fillStyle.stops.length) {
+      const definitions = document.createElementNS(namespace, 'defs');
+      const gradient = document.createElementNS(namespace, 'linearGradient');
+      const gradientId = `rpv-gradient-${++this.customGeometrySequence}`;
+      gradient.id = gradientId;
+      const radians = ((fillStyle.angle ?? 0) * Math.PI) / 180;
+      const horizontal = Math.cos(radians) / 2;
+      const vertical = Math.sin(radians) / 2;
+      gradient.setAttribute('x1', String(0.5 - horizontal));
+      gradient.setAttribute('y1', String(0.5 - vertical));
+      gradient.setAttribute('x2', String(0.5 + horizontal));
+      gradient.setAttribute('y2', String(0.5 + vertical));
+      for (const stopStyle of [...fillStyle.stops].sort(
+        (first, second) => first.position - second.position,
+      )) {
+        const stop = document.createElementNS(namespace, 'stop');
+        stop.setAttribute('offset', String(Math.max(0, Math.min(1, stopStyle.position))));
+        stop.style.stopColor = color(stopStyle.color) ?? 'transparent';
+        gradient.append(stop);
+      }
+      definitions.append(gradient);
+      svg.append(definitions);
+      path.style.fill = `url(#${gradientId})`;
+    } else if (fillStyle?.type === 'pattern') {
+      path.style.fill = color(fillStyle.foreground) ?? 'none';
+    } else if (fillStyle?.type === 'image') {
+      const definitions = document.createElementNS(namespace, 'defs');
+      const clipPath = document.createElementNS(namespace, 'clipPath');
+      const clipId = `rpv-clip-${++this.customGeometrySequence}`;
+      clipPath.id = clipId;
+      const clipShape = path.cloneNode() as SVGPathElement;
+      clipShape.removeAttribute('style');
+      clipPath.append(clipShape);
+      definitions.append(clipPath);
+      svg.append(definitions);
+
+      const image = document.createElementNS(namespace, 'image');
+      const horizontal = Math.max(
+        0.000_001,
+        1 - (fillStyle.crop?.left ?? 0) - (fillStyle.crop?.right ?? 0),
+      );
+      const vertical = Math.max(
+        0.000_001,
+        1 - (fillStyle.crop?.top ?? 0) - (fillStyle.crop?.bottom ?? 0),
+      );
+      image.setAttribute('x', String(-(fillStyle.crop?.left ?? 0) / horizontal));
+      image.setAttribute('y', String(-(fillStyle.crop?.top ?? 0) / vertical));
+      image.setAttribute('width', String(1 / horizontal));
+      image.setAttribute('height', String(1 / vertical));
+      image.setAttribute('preserveAspectRatio', 'none');
+      image.setAttribute('clip-path', `url(#${clipId})`);
+      image.style.opacity = String(Math.max(0, Math.min(1, fillStyle.opacity ?? 1)));
+      this.applyAsset(
+        fillStyle.assetId,
+        (url) => image.setAttribute('href', url),
+        node.id,
+      );
+      svg.append(image);
+    }
+
+    if (node.line) {
+      path.style.stroke = color(node.line.color) ?? 'currentColor';
+      path.style.strokeWidth = `${Math.max(0, node.line.width ?? 1)}px`;
+      if (/dash/i.test(node.line.dash ?? '')) path.style.strokeDasharray = '6 4';
+      else if (/dot/i.test(node.line.dash ?? '')) path.style.strokeDasharray = '1 3';
+    }
+    svg.append(path);
+    return svg;
   }
 
   private createChart(node: Extract<SlideNode, { type: 'chart' }>): HTMLElement {
@@ -443,7 +736,7 @@ export class NormalizedPresentationViewer {
     }
     const values = node.series
       .flatMap((series) => series.values)
-      .filter((value): value is number => value !== null);
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
     if (!values.length) {
       const empty = document.createElement('div');
       empty.textContent = node.title ?? 'Chart';
@@ -478,15 +771,21 @@ export class NormalizedPresentationViewer {
     svg.setAttribute('preserveAspectRatio', 'none');
     svg.style.width = '100%';
     svg.style.flex = '1 1 auto';
-    const maximum = Math.max(1, ...values.map((value) => Math.abs(value)));
+    const minimum = Math.min(0, ...values);
+    const maximum = Math.max(0, ...values);
+    const range = maximum - minimum || 1;
+    const plotTop = 60;
+    const plotHeight = 480;
+    const yPosition = (value: number) => plotTop + ((maximum - value) / range) * plotHeight;
+    const zeroY = yPosition(0);
     const pointCount = Math.max(1, ...node.series.map((series) => series.values.length));
     if (/line|scatter|area/i.test(node.chartType)) {
       node.series.forEach((series, seriesIndex) => {
         const points = series.values
           .map((value, index) =>
-            value === null
+            typeof value !== 'number' || !Number.isFinite(value)
               ? null
-              : `${80 + (index / Math.max(1, pointCount - 1)) * 840},${540 - (value / maximum) * 460}`,
+              : `${80 + (index / Math.max(1, pointCount - 1)) * 840},${yPosition(value)}`,
           )
           .filter((point): point is string => point !== null)
           .join(' ');
@@ -503,11 +802,12 @@ export class NormalizedPresentationViewer {
       const barWidth = Math.max(4, (slot * 0.72) / seriesCount);
       node.series.forEach((series, seriesIndex) => {
         series.values.forEach((value, index) => {
-          if (value === null) return;
-          const height = (Math.abs(value) / maximum) * 460;
+          if (typeof value !== 'number' || !Number.isFinite(value)) return;
+          const valueY = yPosition(value);
+          const height = Math.abs(zeroY - valueY);
           const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
           rect.setAttribute('x', String(80 + index * slot + seriesIndex * barWidth));
-          rect.setAttribute('y', String(540 - height));
+          rect.setAttribute('y', String(Math.min(zeroY, valueY)));
           rect.setAttribute('width', String(barWidth * 0.9));
           rect.setAttribute('height', String(height));
           rect.setAttribute('fill', color(series.color) ?? palette[seriesIndex % palette.length]!);
@@ -547,34 +847,84 @@ export class NormalizedPresentationViewer {
     }
 
     if (node.type === 'shape') {
-      this.applyFill(element, node.fill, node.id);
-      applyGeometry(element, node.geometry.preset);
-      applyLine(element, node.line);
-      element.style.overflow = 'hidden';
-      element.style.display = 'flex';
-      element.style.flexDirection = 'column';
-      element.style.whiteSpace = 'pre-wrap';
-      element.style.justifyContent =
-        node.verticalAlignment === 'middle'
-          ? 'center'
-          : node.verticalAlignment === 'bottom'
-            ? 'flex-end'
-            : 'flex-start';
-      if (node.textInsets) {
-        const { top, right, bottom, left } = node.textInsets;
-        element.style.padding = `${top / EMU_PER_CSS_PIXEL}px ${right / EMU_PER_CSS_PIXEL}px ${bottom / EMU_PER_CSS_PIXEL}px ${left / EMU_PER_CSS_PIXEL}px`;
+      if (node.geometry.path) {
+        element.append(this.createCustomGeometry(node));
+      } else {
+        this.applyFill(element, node.fill, node.id);
+        applyGeometry(element, node.geometry.preset);
+        applyLine(element, node.line);
       }
-      if (node.paragraphs) applyText(element, node.paragraphs);
+      const shapeAutofit = node.autofit?.mode === 'shape';
+      const verticalText = Boolean(node.verticalText && node.verticalText.toLowerCase() !== 'horz');
+      const growsToFitText = shapeAutofit && !verticalText;
+      if (growsToFitText) {
+        const minimumHeight = element.style.height;
+        element.style.height = 'auto';
+        element.style.minHeight = minimumHeight;
+        element.style.display = 'flex';
+        element.style.flexDirection = 'column';
+      }
+      element.style.overflowX =
+        shapeAutofit || allowsTextOverflow(node.horizontalOverflow) ? 'visible' : 'clip';
+      element.style.overflowY =
+        shapeAutofit || allowsTextOverflow(node.verticalOverflow) ? 'visible' : 'clip';
+      if (node.paragraphs) {
+        const textBody = document.createElement('div');
+        textBody.dataset.rpvTextBody = '';
+        textBody.style.position = growsToFitText ? 'relative' : 'absolute';
+        if (!growsToFitText) textBody.style.inset = '0';
+        textBody.style.width = '100%';
+        textBody.style.height = growsToFitText ? 'auto' : '100%';
+        if (growsToFitText) textBody.style.flex = '1 0 auto';
+        textBody.style.boxSizing = 'border-box';
+        textBody.style.display = 'flex';
+        textBody.style.flexDirection = 'column';
+        textBody.style.justifyContent =
+          node.verticalAlignment === 'middle'
+            ? 'center'
+            : node.verticalAlignment === 'bottom'
+              ? 'flex-end'
+              : 'flex-start';
+        applyTextInsets(textBody, node.textInsets, true);
+        applyTextOrientation(textBody, node.textRotation, node.verticalText);
+
+        const textContent = document.createElement('div');
+        textContent.dataset.rpvTextContent = '';
+        textContent.style.minWidth = '0';
+        textContent.style.maxHeight = '100%';
+        if (node.columnCount && node.columnCount > 1) {
+          textContent.style.columnCount = String(Math.floor(node.columnCount));
+          textContent.style.columnFill = 'auto';
+          if (node.columnSpacing !== undefined) {
+            textContent.style.columnGap = `${node.columnSpacing / EMU_PER_CSS_PIXEL}px`;
+          }
+          if (node.rightToLeftColumns) textContent.style.direction = 'rtl';
+        }
+        applyText(textContent, node.paragraphs, {
+          ...(node.autofit?.mode === 'normal'
+            ? {
+                fontScale: node.autofit.fontScale,
+                lineSpacingReduction: node.autofit.lineSpacingReduction,
+              }
+            : {}),
+          ...(node.textWrap !== undefined ? { textWrap: node.textWrap } : {}),
+          ...(node.spaceFirstLastParagraph !== undefined
+            ? { spaceFirstLastParagraph: node.spaceFirstLastParagraph }
+            : {}),
+        });
+        textBody.append(textContent);
+        element.append(textBody);
+      }
     } else if (node.type === 'image') {
       const image = document.createElement('img');
       this.applyAsset(node.assetId, (url) => (image.src = url), node.id);
       image.alt = node.altText ?? node.name ?? '';
+      image.style.display = 'block';
       image.style.width = '100%';
       image.style.height = '100%';
       image.style.objectFit = node.preserveAspectRatio === false ? 'fill' : 'contain';
-      if (node.crop) {
-        image.style.clipPath = `inset(${node.crop.top * 100}% ${node.crop.right * 100}% ${node.crop.bottom * 100}% ${node.crop.left * 100}%)`;
-      }
+      element.style.overflow = 'hidden';
+      if (node.crop) applyCroppedImage(image, node.crop);
       element.append(image);
     } else if (node.type === 'group') {
       const childCoordinate = node.childTransform ?? {
@@ -601,6 +951,7 @@ export class NormalizedPresentationViewer {
         table.append(columns);
       }
       const totalRowHeight = node.rowHeights?.reduce((sum, height) => sum + height, 0) || 0;
+      const hasFixedRowHeights = totalRowHeight > 0;
       node.rows.forEach((row, rowIndex) => {
         const tr = table.insertRow();
         if (totalRowHeight && node.rowHeights?.[rowIndex] !== undefined) {
@@ -610,10 +961,13 @@ export class NormalizedPresentationViewer {
           const td = tr.insertCell();
           td.colSpan = cell.colSpan ?? 1;
           td.rowSpan = cell.rowSpan ?? 1;
-          td.style.padding = '0.25em';
+          if (hasFixedRowHeights) {
+            td.style.position = 'relative';
+            td.style.padding = '0';
+          } else if (cell.textInsets) applyTextInsets(td, cell.textInsets, false);
+          else td.style.padding = '0.25em';
           td.style.overflow = 'hidden';
-          td.style.verticalAlign = 'middle';
-          td.style.border = '1px solid currentColor';
+          td.style.verticalAlign = cell.verticalAlignment ?? 'middle';
           this.applyFill(td, cell.fill, node.id);
           for (const [side, border] of Object.entries(cell.borders ?? {})) {
             if (!border) continue;
@@ -624,7 +978,28 @@ export class NormalizedPresentationViewer {
               `${width}px ${style} ${color(border.color) ?? 'currentColor'}`,
             );
           }
-          applyText(td, cell.paragraphs);
+          const textBody = document.createElement('div');
+          textBody.dataset.rpvTableTextBody = '';
+          textBody.style.width = '100%';
+          textBody.style.boxSizing = 'border-box';
+          if (hasFixedRowHeights) {
+            textBody.style.position = 'absolute';
+            textBody.style.inset = '0';
+            textBody.style.height = '100%';
+            textBody.style.display = 'flex';
+            textBody.style.flexDirection = 'column';
+            textBody.style.justifyContent =
+              cell.verticalAlignment === 'top'
+                ? 'flex-start'
+                : cell.verticalAlignment === 'bottom'
+                  ? 'flex-end'
+                  : 'center';
+            if (cell.textInsets) applyTextInsets(textBody, cell.textInsets, false);
+            else textBody.style.padding = '0.25em';
+          }
+          applyTextOrientation(textBody, cell.textRotation, undefined, true);
+          applyText(textBody, cell.paragraphs);
+          td.append(textBody);
         }
       });
       element.append(table);
@@ -662,13 +1037,20 @@ export class NormalizedPresentationViewer {
     const element = document.createElement('section');
     element.className = 'rpv-normalized-slide';
     element.dataset.rpvSlideIndex = String(index);
+    element.dataset.rpvSlideHidden = String(Boolean(slide.hidden));
     element.setAttribute('aria-label', `Slide ${index + 1} of ${this.slideCount}`);
     element.style.position = 'relative';
     element.style.width = `${this.naturalSlideWidth}px`;
     element.style.height = `${this.naturalSlideHeight}px`;
     element.style.overflow = 'hidden';
     element.style.background = '#fff';
-    if (slide.background) this.applyFill(element, slide.background, slide.id);
+    element.style.color = '#000';
+    element.style.fontFamily = 'Arial, sans-serif';
+    element.style.fontWeight = '400';
+    element.style.lineHeight = String(POWERPOINT_SINGLE_LINE_HEIGHT);
+    if (slide.background && slide.background.type !== 'none') {
+      this.applyFill(element, slide.background, slide.id);
+    }
     for (const node of slide.nodes) {
       try {
         element.append(
