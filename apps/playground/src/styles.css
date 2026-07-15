@@ -1,0 +1,597 @@
+@import '@fontsource-variable/inter';
+@import '@extend-ai/react-pptx/styles.css';
+
+:root {
+  font-family: 'Inter Variable', sans-serif;
+  color: oklch(0.145 0 0);
+  background: oklch(0.97 0 0);
+  font-synthesis: none;
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.playground-shell {
+  height: 100%;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--muted) 72%, var(--background));
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.playground-shell.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.87 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.371 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+}
+
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  left: 8px;
+  padding: 8px 12px;
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-radius: 6px;
+  transform: translateY(-150%);
+}
+
+.skip-link:focus {
+  transform: translateY(0);
+}
+
+.playground-layout {
+  width: min(100%, 1400px);
+  height: 100%;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.toolbar-card {
+  flex: 0 0 auto;
+  padding: 14px;
+  color: var(--card-foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px oklch(0.145 0 0 / 4%);
+}
+
+.status-row,
+.toolbar-row,
+.file-summary,
+.status-actions,
+.button-group,
+.readonly-control {
+  display: flex;
+  align-items: center;
+}
+
+.status-row {
+  min-height: 30px;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.file-summary {
+  min-width: 0;
+  gap: 9px;
+}
+
+.file-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 6px;
+}
+
+.file-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.file-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.file-summary strong {
+  max-width: 42vw;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-summary span,
+.status-text {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.status-actions {
+  gap: 8px;
+}
+
+.status-text {
+  margin-right: 4px;
+}
+
+.toolbar-row {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button-group {
+  gap: 0;
+}
+
+.button {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 11px;
+  color: var(--foreground);
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.button-group > .button:not(:first-child),
+.button-group > .select-control:not(:first-child),
+.button-group > .page-count:not(:first-child) {
+  margin-left: -1px;
+}
+
+.button-group > :not(:first-child):not(:last-child),
+.button-group > :first-child:not(:last-child) {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.button-group > :last-child:not(:first-child),
+.button-group > :not(:first-child):not(:last-child) {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.button:hover:not(:disabled),
+.button[data-active] {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.button[data-active] {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+
+.button:focus-visible,
+.search-control:focus-within,
+.select-control:focus-within {
+  outline: none;
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--ring) 28%, transparent);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.button.small {
+  height: 30px;
+  padding: 0 10px;
+}
+
+.button.icon-only {
+  width: 32px;
+  padding: 0;
+}
+
+.button.primary {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.button.primary:hover {
+  background: color-mix(in oklch, var(--primary) 88%, var(--background));
+}
+
+.page-count {
+  height: 32px;
+  min-width: 58px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  color: var(--muted-foreground);
+  background: color-mix(in oklch, var(--input) 22%, var(--background));
+  border: 1px solid var(--input);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-control {
+  height: 32px;
+  min-width: 200px;
+  max-width: 300px;
+  flex: 1 1 230px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  background: var(--background);
+  border: 1px solid var(--input);
+  border-radius: 6px;
+}
+
+.search-control > svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted-foreground);
+}
+
+.search-control input {
+  min-width: 0;
+  flex: 1;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+}
+
+.search-control input::placeholder {
+  color: var(--muted-foreground);
+}
+
+.search-control span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.select-control {
+  height: 32px;
+  display: inline-flex;
+  border: 1px solid var(--input);
+  border-radius: 6px;
+  background: var(--background);
+}
+
+.select-control select {
+  min-width: 74px;
+  padding: 0 24px 0 10px;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  outline: 0;
+  font-size: 12px;
+}
+
+.toolbar-end {
+  margin-left: auto;
+  gap: 8px;
+}
+
+.readonly-control {
+  height: 32px;
+  gap: 8px;
+  padding: 0 8px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.switch {
+  width: 30px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 2px;
+  background: var(--primary);
+  border-radius: 999px;
+}
+
+.switch span {
+  width: 14px;
+  height: 14px;
+  background: var(--primary-foreground);
+  border-radius: 50%;
+}
+
+.viewer-panel {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 16px;
+  background: color-mix(in oklch, var(--muted) 58%, var(--background));
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+}
+
+.viewer-panel > .rpv-root {
+  height: 100%;
+}
+
+.viewer-panel[data-dragging] > .rpv-root {
+  opacity: 0.26;
+}
+
+.drop-overlay {
+  pointer-events: none;
+  position: absolute;
+  z-index: 10;
+  inset: 16px;
+  display: none;
+  place-items: center;
+  background: color-mix(in oklch, var(--background) 78%, transparent);
+  border: 2px dashed color-mix(in oklch, var(--primary) 50%, transparent);
+  border-radius: var(--radius);
+  backdrop-filter: blur(1px);
+}
+
+.viewer-panel[data-dragging] .drop-overlay {
+  display: grid;
+}
+
+.drop-overlay > div {
+  max-width: 390px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--card-foreground);
+  background: color-mix(in oklch, var(--card) 95%, transparent);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 2px);
+  box-shadow: 0 8px 24px oklch(0.145 0 0 / 10%);
+}
+
+.drop-overlay svg {
+  width: 20px;
+  color: var(--primary);
+}
+
+.drop-overlay span {
+  display: grid;
+  gap: 3px;
+}
+
+.drop-overlay strong {
+  font-size: 13px;
+}
+
+.drop-overlay small {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+/* Align the reusable viewer chrome with the react-docx canvas. */
+.playground-shell .rpv-root {
+  --rpv-ink: var(--foreground);
+  --rpv-paper: var(--background);
+  --rpv-panel: var(--muted);
+  --rpv-rule: var(--border);
+  --rpv-accent: var(--primary);
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  font-family: 'Inter Variable', sans-serif;
+}
+
+.playground-shell .rpv-workspace {
+  height: 100%;
+  min-height: 100%;
+  max-height: 100%;
+  gap: 12px;
+}
+
+.playground-shell .rpv-stage {
+  order: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+
+.playground-shell .rpv-viewport {
+  padding: 0;
+}
+
+.playground-shell .rpv-filmstrip,
+.playground-shell .rpv-diagnostics {
+  order: 2;
+  width: 246px;
+  flex-basis: 246px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.playground-shell .rpv-filmstrip {
+  padding: 14px;
+}
+
+.playground-shell .rpv-thumbnail {
+  padding-left: 24px;
+}
+
+.playground-shell .rpv-thumbnail__canvas {
+  border-color: var(--border);
+  border-radius: 4px;
+  box-shadow: 0 1px 2px oklch(0.145 0 0 / 5%);
+}
+
+.playground-shell .rpv-thumbnail[data-active] .rpv-thumbnail__canvas {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 25%, transparent);
+}
+
+.playground-shell .rpv-diagnostics {
+  padding: 16px;
+}
+
+.playground-shell .rpv-diagnostics p strong {
+  color: var(--foreground);
+}
+
+.playground-shell .rpv-status {
+  color: var(--foreground);
+  background: transparent;
+}
+
+@media (max-width: 960px) {
+  .playground-layout {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .toolbar-card {
+    padding: 10px;
+  }
+
+  .status-actions .status-text,
+  .readonly-control {
+    display: none;
+  }
+
+  .toolbar-end {
+    margin-left: 0;
+  }
+
+  .viewer-panel {
+    padding: 10px;
+  }
+
+  .playground-shell .rpv-filmstrip,
+  .playground-shell .rpv-diagnostics {
+    width: 200px;
+    flex-basis: 200px;
+  }
+}
+
+@media (max-width: 640px) {
+  .playground-layout {
+    padding: 0;
+  }
+
+  .toolbar-card,
+  .viewer-panel {
+    border-radius: 0;
+  }
+
+  .status-row {
+    padding: 0 2px;
+  }
+
+  .status-actions .button:first-of-type,
+  .search-buttons {
+    display: none;
+  }
+
+  .search-control {
+    max-width: none;
+    flex-basis: 100%;
+    order: -1;
+  }
+
+  .playground-shell .rpv-filmstrip,
+  .playground-shell .rpv-diagnostics {
+    position: absolute;
+    z-index: 5;
+    right: 0;
+    height: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playground-shell,
+  .button {
+    transition: none;
+  }
+}

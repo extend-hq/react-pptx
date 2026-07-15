@@ -1,0 +1,32 @@
+{
+  "name": "@extend-ai/react-pptx-model",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Format-neutral presentation model for react-pptx",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/presentation-model/src"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT"
+}

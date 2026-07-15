@@ -1,0 +1,38 @@
+{
+  "name": "@extend-ai/react-pptx-wasm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rust/Wasm parser runtime for react-pptx",
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./eager": {
+      "types": "./dist/eager.d.ts",
+      "import": "./dist/eager.js"
+    }
+  },
+  "files": [
+    "dist",
+    "pkg",
+    "README.md"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build ../../crates/pptx-wasm --target web --out-dir ../../packages/wasm/pkg --release",
+    "build": "pnpm build:wasm && tsup src/index.ts src/eager.ts --format esm --dts --sourcemap --clean --splitting false && cp pkg/pptx_wasm_bg.wasm dist/pptx_wasm_bg.wasm",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --root ../.. packages/wasm/src"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  },
+  "license": "MIT"
+}

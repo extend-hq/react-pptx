@@ -1,0 +1,58 @@
+{
+  "name": "react-pptx-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/extend-hq/react-pptx.git"
+  },
+  "bugs": {
+    "url": "https://github.com/extend-hq/react-pptx/issues"
+  },
+  "homepage": "https://github.com/extend-hq/react-pptx#readme",
+  "scripts": {
+    "build": "pnpm --filter @extend-ai/react-pptx-wasm build && pnpm --filter @extend-ai/react-pptx-model build && pnpm --filter @extend-ai/react-pptx build && pnpm --filter @extend-ai/react-pptx-playground build",
+    "dev": "pnpm --filter @extend-ai/react-pptx-playground dev",
+    "typecheck": "pnpm -r --filter './packages/*' typecheck && pnpm --filter @extend-ai/react-pptx-playground typecheck",
+    "test": "pnpm test:unit && pnpm test:oracle && pnpm test:rust",
+    "test:unit": "vitest run",
+    "test:oracle": "node --test tests/fidelity/*.test.mjs",
+    "test:rust": "cargo test --workspace",
+    "test:visual": "playwright test",
+    "fixtures:generate": "node scripts/generate-test-fixtures.mjs",
+    "powerpoint-oracle:validate": "node scripts/powerpoint-oracle/validate-manifest.mjs",
+    "powerpoint-oracle:export": "node scripts/powerpoint-oracle/export-corpus.mjs",
+    "powerpoint-oracle:capture": "node scripts/powerpoint-oracle/capture-corpus.mjs",
+    "powerpoint-oracle:compare": "node scripts/powerpoint-oracle/compare-corpus.mjs",
+    "pack:check": "node scripts/verify-package.mjs",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "publish-packages": "changeset publish"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.5",
+    "@extend-ai/react-pptx-model": "workspace:*",
+    "@extend-ai/react-pptx-wasm": "workspace:*",
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.3",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "jsdom": "^26.0.0",
+    "pixelmatch": "^7.1.0",
+    "pngjs": "^7.0.0",
+    "pptxgenjs": "^3.12.0",
+    "prettier": "^3.5.3",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": "0.28.1"
+    },
+    "patchedDependencies": {
+      "emf-converter@1.5.0": "patches/emf-converter@1.5.0.patch"
+    }
+  }
+}

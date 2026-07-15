@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "expectedRendererEnvironment": {
+    "browserName": "chromium",
+    "browserVersion": "PIN_ME",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "viewport": { "width": 1440, "height": 900 },
+    "deviceScaleFactor": 1,
+    "locale": "en-US",
+    "timezone": "UTC",
+    "fontFingerprint": "PIN_ME"
+  },
+  "decks": [
+    {
+      "id": "basic-shapes",
+      "source": "decks/basic-shapes.pptx",
+      "sha256": "PIN_ME",
+      "maxPixelDifferenceRatio": 0.01,
+      "slides": [{ "index": 0, "reference": "references/basic-shapes/slide-1.png" }]
+    }
+  ]
+}
