@@ -52,11 +52,9 @@ fn parses_the_pretext_layout_regression_fixture() {
             .as_ref()
             .is_some_and(|stops| stops.len() == 3)
     }));
-    assert!(
-        paragraphs
-            .iter()
-            .all(|paragraph| paragraph.default_tab_size_emu == Some(914_400))
-    );
+    assert!(paragraphs
+        .iter()
+        .all(|paragraph| paragraph.default_tab_size_emu == Some(914_400)));
     let stops = paragraphs[0].tab_stops.as_ref().unwrap();
     assert_eq!(stops[0].position_emu, 1_234_440);
     assert_eq!(stops[0].alignment, TextTabAlignment::Left);

@@ -49,8 +49,39 @@ The workflow filename is part of the npm trust relationship and must match exact
 
 ## First release bootstrap
 
-npm requires the package to exist before a Trusted Publisher can be attached. For the
-first release only:
+npm requires the package to exist before a Trusted Publisher can be attached. The preferred
+bootstrap is one publish from an authenticated npm CLI on the clean release commit:
+
+1. Push the release commit and make sure `CI` passes for that exact commit.
+2. Confirm the npm identity and build one verified tarball:
+
+   ```bash
+   npm whoami
+   export REACT_PPTX_PACK_OUTPUT="$(mktemp -t react-pptx.XXXXXX.tgz)"
+   pnpm build
+   pnpm typecheck
+   pnpm test
+   pnpm pack:check
+   ```
+
+3. Publish the verified bytes and confirm npm recorded the release commit:
+
+   ```bash
+   npm publish "$REACT_PPTX_PACK_OUTPUT" --access public
+   npm view @extend-ai/react-pptx@0.1.0 gitHead
+   git rev-parse HEAD
+   ```
+
+   The two commit hashes must match. Do not tag the release manually.
+4. Configure the npm Trusted Publisher using the values above.
+5. Set the repository Actions variable `NPM_PUBLISH_ENABLED` to `true`. Leave
+   `NPM_PUBLISH_USE_TOKEN` unset or `false`.
+6. Manually run `CI` on `main`. The publish workflow recognizes the existing npm version,
+   verifies its `gitHead`, creates the matching annotated tag, and creates the GitHub release
+   without republishing the package.
+
+If an authenticated local publish is not available, the workflow also supports a one-time token
+bootstrap:
 
 1. Add a GitHub Actions secret named `NPM_TOKEN` containing a granular npm token allowed
    to publish `@extend-ai/react-pptx`.
