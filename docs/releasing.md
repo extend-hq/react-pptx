@@ -81,7 +81,7 @@ bootstrap is one publish from an authenticated npm CLI on the clean release comm
 6. Set the repository Actions variable `NPM_PUBLISH_ENABLED` to `true`. Leave
    `NPM_PUBLISH_USE_TOKEN` unset or `false`.
 7. Manually run `CI` on `main`. The publish workflow recognizes the existing npm version,
-   verifies its `gitHead` or hash-pinned bootstrap record, creates the matching annotated tag,
+   verifies its `gitHead` or hash-pinned bootstrap record, creates the matching Git tag,
    and creates the GitHub release without republishing the package.
 
 If an authenticated local publish is not available, the workflow also supports a one-time token

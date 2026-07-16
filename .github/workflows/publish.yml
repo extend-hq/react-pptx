@@ -306,39 +306,35 @@ jobs:
           env.USE_NPM_TOKEN != 'true'
         run: npm publish "$PACKAGE_TARBALL" --access public --provenance --tag "${{ needs.prepare.outputs.dist_tag }}"
 
-      - name: Create annotated release tag
+      - name: Create the GitHub release and tag
         env:
           GH_TOKEN: ${{ github.token }}
+          PACKAGE_NAME: ${{ needs.prepare.outputs.name }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-            echo "$TAG already points to the published commit."
-          else
-            TAG_OBJECT_SHA=$(
-              jq -n \
-                --arg tag "$TAG" \
-                --arg message "Release $TAG" \
-                --arg object "$RELEASE_COMMIT" \
-                '{
-                  tag: $tag,
-                  message: $message,
-                  object: $object,
-                  type: "commit",
-                  tagger: {
-                    name: "github-actions[bot]",
-                    email: "41898282+github-actions[bot]@users.noreply.github.com"
-                  }
-                }' |
-                gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" --input - \
-                  --jq '.sha'
-            )
-            jq -n \
-              --arg ref "refs/tags/$TAG" \
-              --arg sha "$TAG_OBJECT_SHA" \
-              '{ref: $ref, sha: $sha}' |
-              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" --input - > /dev/null
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "$TAG already has a GitHub release."
+            exit 0
           fi
+
+          RELEASE_ARGS=(
+            "$TAG"
+            --title "$TAG"
+            --generate-notes
+            --notes "Published [$PACKAGE_NAME@$VERSION](https://www.npmjs.com/package/$PACKAGE_NAME/v/$VERSION) to npm."
+          )
+          if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
+            RELEASE_ARGS+=(--verify-tag)
+          else
+            RELEASE_ARGS+=(--target "$RELEASE_COMMIT")
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            RELEASE_ARGS+=(--prerelease)
+          fi
+          gh release create "${RELEASE_ARGS[@]}"
 
       - name: Verify the remote release tag
         env:
@@ -353,28 +349,3 @@ jobs:
             echo "Remote $TAG resolves to $REMOTE_TAG instead of $RELEASE_COMMIT." >&2
             exit 1
           fi
-
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PACKAGE_NAME: ${{ needs.prepare.outputs.name }}
-          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          if gh release view "$TAG" > /dev/null 2>&1; then
-            echo "$TAG already has a GitHub release."
-            exit 0
-          fi
-
-          RELEASE_ARGS=(
-            "$TAG"
-            --verify-tag
-            --title "$TAG"
-            --generate-notes
-            --notes "Published [$PACKAGE_NAME@$VERSION](https://www.npmjs.com/package/$PACKAGE_NAME/v/$VERSION) to npm."
-          )
-          if [ "$PRERELEASE" = "true" ]; then
-            RELEASE_ARGS+=(--prerelease)
-          fi
-          gh release create "${RELEASE_ARGS[@]}"
