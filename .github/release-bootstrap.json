@@ -1,0 +1,7 @@
+{
+  "@extend-ai/react-pptx@0.1.0": {
+    "commit": "205d957c6101a8b2ad67754535d5ec54a64cc212",
+    "integrity": "sha512-moeK5nwGQhZfg/s9OAUeQl2LnY+wK30O/+WjilD46DbZNa7d3jaq4Udrxy+yygROHen/Bziktmrgh+5FHbLopA==",
+    "shasum": "9df7f59c618564998e55ecffa957896e37cab414"
+  }
+}

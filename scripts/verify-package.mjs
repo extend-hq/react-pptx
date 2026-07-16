@@ -33,6 +33,12 @@ try {
 
   const packedDirectory = join(temporaryDirectory, 'package');
   const manifest = JSON.parse(readFileSync(join(packedDirectory, 'package.json'), 'utf8'));
+  const expectedGitHead = process.env.REACT_PPTX_GIT_HEAD;
+  if (expectedGitHead && manifest.gitHead !== expectedGitHead) {
+    throw new Error(
+      `Packed manifest gitHead ${manifest.gitHead ?? '(missing)'} does not match ${expectedGitHead}`,
+    );
+  }
   const dependencyGroups = [
     'dependencies',
     'optionalDependencies',

@@ -26,7 +26,8 @@ package so consumers do not need internal workspace packages or repository patch
 When the `NPM_PUBLISH_ENABLED` repository Actions variable is `true`, a successful `CI` run
 for `main` triggers `.github/workflows/publish.yml`. The release workflow checks whether that
 exact version already exists on npm. If it is new, an unprivileged job builds and verifies one
-tarball, then a minimal privileged job publishes those exact bytes, pushes a matching
+tarball, stamps it with the validated source commit, then a minimal privileged job publishes
+those exact bytes, pushes a matching
 `v<version>` Git tag, and creates a GitHub release. A prerelease such as `0.2.0-beta.0` is
 published under the matching `beta` npm dist-tag.
 
@@ -64,21 +65,24 @@ bootstrap is one publish from an authenticated npm CLI on the clean release comm
    pnpm pack:check
    ```
 
-3. Publish the verified bytes and confirm npm recorded the release commit:
+3. Publish the verified bytes and record npm's immutable hashes plus the release commit:
 
    ```bash
    npm publish "$REACT_PPTX_PACK_OUTPUT" --access public
-   npm view @extend-ai/react-pptx@0.1.0 gitHead
+   npm view @extend-ai/react-pptx@0.1.0 dist.shasum dist.integrity --json
    git rev-parse HEAD
    ```
 
-   The two commit hashes must match. Do not tag the release manually.
-4. Configure the npm Trusted Publisher using the values above.
-5. Set the repository Actions variable `NPM_PUBLISH_ENABLED` to `true`. Leave
+4. Check `npm view @extend-ai/react-pptx@0.1.0 gitHead`. If npm reports the exact release
+   commit, no bootstrap record is needed. If it is empty, add that package version, commit,
+   `dist.shasum`, and `dist.integrity` to `.github/release-bootstrap.json`, then push the record
+   through `CI`. This exception is hash-pinned and is only for a manual first publish.
+5. Configure the npm Trusted Publisher using the values above.
+6. Set the repository Actions variable `NPM_PUBLISH_ENABLED` to `true`. Leave
    `NPM_PUBLISH_USE_TOKEN` unset or `false`.
-6. Manually run `CI` on `main`. The publish workflow recognizes the existing npm version,
-   verifies its `gitHead`, creates the matching annotated tag, and creates the GitHub release
-   without republishing the package.
+7. Manually run `CI` on `main`. The publish workflow recognizes the existing npm version,
+   verifies its `gitHead` or hash-pinned bootstrap record, creates the matching annotated tag,
+   and creates the GitHub release without republishing the package.
 
 If an authenticated local publish is not available, the workflow also supports a one-time token
 bootstrap:

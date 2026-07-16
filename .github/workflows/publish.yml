@@ -29,7 +29,7 @@ jobs:
       name: ${{ steps.meta.outputs.name }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
       published: ${{ steps.npm_state.outputs.published }}
-      tarball_verified: ${{ steps.verify_existing.outputs.verified }}
+      release_commit: ${{ steps.npm_state.outputs.release_commit }}
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -79,6 +79,8 @@ jobs:
         id: npm_state
         run: |
           node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from 'node:fs';
+
           const name = process.env.PACKAGE_NAME;
           const version = process.env.PACKAGE_VERSION;
           const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${encodeURIComponent(version)}`;
@@ -101,15 +103,33 @@ jobs:
           if (!manifest.dist?.shasum) {
             throw new Error(`npm registry did not return a tarball shasum for ${name}@${version}`);
           }
-          const tarballUrl = new URL(manifest.dist.tarball);
-          if (tarballUrl.protocol !== 'https:' || tarballUrl.hostname !== 'registry.npmjs.org') {
-            throw new Error(`npm registry returned an unexpected tarball URL for ${name}@${version}`);
+          if (!manifest.dist?.integrity) {
+            throw new Error(`npm registry did not return tarball integrity for ${name}@${version}`);
+          }
+
+          let releaseCommit = '';
+          if (!manifest.gitHead) {
+            const releases = JSON.parse(
+              readFileSync('.github/release-bootstrap.json', 'utf8'),
+            );
+            const release = releases[`${name}@${version}`];
+            if (release) {
+              if (
+                release.shasum !== manifest.dist.shasum ||
+                release.integrity !== manifest.dist.integrity
+              ) {
+                throw new Error(`npm integrity does not match the bootstrap record for ${name}@${version}`);
+              }
+              if (!/^[0-9a-f]{40}$/.test(release.commit)) {
+                throw new Error(`bootstrap record has an invalid commit for ${name}@${version}`);
+              }
+              releaseCommit = release.commit;
+            }
           }
 
           console.log('published=true');
           console.log(`git_head=${manifest.gitHead ?? ''}`);
-          console.log(`shasum=${manifest.dist.shasum}`);
-          console.log(`tarball_url=${tarballUrl}`);
+          console.log(`release_commit=${releaseCommit}`);
           console.error(`${name}@${version} already exists on npm.`);
           NODE
         env:
@@ -117,90 +137,47 @@ jobs:
           PACKAGE_VERSION: ${{ steps.meta.outputs.version }}
 
       - name: Install dependencies
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Set up Rust
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: 1.93.1
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         run: cargo install wasm-pack --version 0.13.1 --locked
 
       - name: Build release package
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         run: pnpm build
 
       - name: Typecheck release package
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         run: pnpm typecheck
 
+      - name: Stamp the validated release commit
+        if: steps.npm_state.outputs.published != 'true'
+        env:
+          RELEASE_COMMIT: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = 'packages/react-viewer/package.json';
+          const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
+          pkg.gitHead = process.env.RELEASE_COMMIT;
+          fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+
       - name: Create and verify the release tarball
-        if: >-
-          steps.npm_state.outputs.published != 'true' ||
-          steps.npm_state.outputs.git_head == ''
+        if: steps.npm_state.outputs.published != 'true'
         env:
           REACT_PPTX_PACK_OUTPUT: ${{ runner.temp }}/react-pptx.tgz
+          REACT_PPTX_GIT_HEAD: ${{ github.event.workflow_run.head_sha }}
         run: pnpm pack:check
-
-      - name: Verify the existing npm tarball
-        id: verify_existing
-        if: >-
-          steps.npm_state.outputs.published == 'true' &&
-          steps.npm_state.outputs.git_head == ''
-        env:
-          PACKAGE_TARBALL: ${{ runner.temp }}/react-pptx.tgz
-          PUBLISHED_TARBALL_URL: ${{ steps.npm_state.outputs.tarball_url }}
-        run: |
-          LOCAL_DIR=$(mktemp -d)
-          PUBLISHED_DIR=$(mktemp -d)
-          PUBLISHED_TARBALL=$(mktemp)
-
-          curl --fail --location --proto '=https' --tlsv1.2 \
-            --output "$PUBLISHED_TARBALL" \
-            "$PUBLISHED_TARBALL_URL"
-          tar -xzf "$PACKAGE_TARBALL" -C "$LOCAL_DIR"
-          tar -xzf "$PUBLISHED_TARBALL" -C "$PUBLISHED_DIR"
-
-          diff --recursive --no-dereference "$LOCAL_DIR/package" "$PUBLISHED_DIR/package"
-          (
-            cd "$LOCAL_DIR/package"
-            find . -printf '%m %y %p %l\n' | LC_ALL=C sort
-          ) > "$LOCAL_DIR/metadata"
-          (
-            cd "$PUBLISHED_DIR/package"
-            find . -printf '%m %y %p %l\n' | LC_ALL=C sort
-          ) > "$PUBLISHED_DIR/metadata"
-          diff --unified "$LOCAL_DIR/metadata" "$PUBLISHED_DIR/metadata"
-
-          echo "verified=true" >> "$GITHUB_OUTPUT"
-          echo "The existing npm package contents exactly match the validated commit."
-
-      - name: Upload a mismatched release tarball for diagnosis
-        if: >-
-          failure() &&
-          steps.npm_state.outputs.published == 'true' &&
-          steps.npm_state.outputs.git_head == ''
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          if-no-files-found: error
-          name: react-pptx-mismatch-${{ github.event.workflow_run.head_sha }}
-          path: ${{ runner.temp }}/react-pptx.tgz
-          retention-days: 1
 
       - name: Upload the verified release tarball
         if: steps.npm_state.outputs.published != 'true'
@@ -239,28 +216,27 @@ jobs:
       - name: Resolve the release commit
         id: release
         env:
+          BOOTSTRAP_RELEASE_COMMIT: ${{ needs.prepare.outputs.release_commit }}
           PUBLISHED_GIT_HEAD: ${{ needs.prepare.outputs.git_head }}
-          TARBALL_VERIFIED: ${{ needs.prepare.outputs.tarball_verified }}
         run: |
           if [ "${{ needs.prepare.outputs.published }}" = "true" ]; then
-            if [ -z "$PUBLISHED_GIT_HEAD" ] || [ "$PUBLISHED_GIT_HEAD" = "null" ]; then
-              if [ "$TARBALL_VERIFIED" != "true" ]; then
-                echo "The existing npm version exposes no gitHead and its package contents were not verified; refusing to create a possibly incorrect tag." >&2
-                exit 1
-              fi
-              echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-              echo "The existing npm package contents match the validated commit exactly."
-              exit 0
+            RELEASE_COMMIT="$PUBLISHED_GIT_HEAD"
+            if [ -z "$RELEASE_COMMIT" ] || [ "$RELEASE_COMMIT" = "null" ]; then
+              RELEASE_COMMIT="$BOOTSTRAP_RELEASE_COMMIT"
             fi
-            if ! git cat-file -e "$PUBLISHED_GIT_HEAD^{commit}" 2> /dev/null; then
-              echo "The npm gitHead $PUBLISHED_GIT_HEAD is not a commit in this repository." >&2
+            if [ -z "$RELEASE_COMMIT" ]; then
+              echo "The existing npm version exposes no gitHead and has no matching bootstrap record; refusing to create a possibly incorrect tag." >&2
               exit 1
             fi
-            if ! git merge-base --is-ancestor "$PUBLISHED_GIT_HEAD" HEAD; then
-              echo "The npm gitHead $PUBLISHED_GIT_HEAD is not on the validated main history." >&2
+            if ! git cat-file -e "$RELEASE_COMMIT^{commit}" 2> /dev/null; then
+              echo "The release commit $RELEASE_COMMIT is not a commit in this repository." >&2
               exit 1
             fi
-            echo "commit=$PUBLISHED_GIT_HEAD" >> "$GITHUB_OUTPUT"
+            if ! git merge-base --is-ancestor "$RELEASE_COMMIT" HEAD; then
+              echo "The release commit $RELEASE_COMMIT is not on the validated main history." >&2
+              exit 1
+            fi
+            echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
           else
             echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           fi
