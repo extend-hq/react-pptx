@@ -204,6 +204,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
+          persist-credentials: false
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up Node and npm registry
@@ -305,18 +306,38 @@ jobs:
           env.USE_NPM_TOKEN != 'true'
         run: npm publish "$PACKAGE_TARBALL" --access public --provenance --tag "${{ needs.prepare.outputs.dist_tag }}"
 
-      - name: Push annotated release tag
+      - name: Create annotated release tag
         env:
+          GH_TOKEN: ${{ github.token }}
           RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           if git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
             echo "$TAG already points to the published commit."
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag --annotate "$TAG" "$RELEASE_COMMIT" --message "Release $TAG"
-            git push origin "$TAG"
+            TAG_OBJECT_SHA=$(
+              jq -n \
+                --arg tag "$TAG" \
+                --arg message "Release $TAG" \
+                --arg object "$RELEASE_COMMIT" \
+                '{
+                  tag: $tag,
+                  message: $message,
+                  object: $object,
+                  type: "commit",
+                  tagger: {
+                    name: "github-actions[bot]",
+                    email: "41898282+github-actions[bot]@users.noreply.github.com"
+                  }
+                }' |
+                gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" --input - \
+                  --jq '.sha'
+            )
+            jq -n \
+              --arg ref "refs/tags/$TAG" \
+              --arg sha "$TAG_OBJECT_SHA" \
+              '{ref: $ref, sha: $sha}' |
+              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" --input - > /dev/null
           fi
 
       - name: Verify the remote release tag
