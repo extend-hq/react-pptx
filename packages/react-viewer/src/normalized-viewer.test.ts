@@ -246,6 +246,10 @@ describe('normalized viewer safety and fidelity', () => {
     expect(container.querySelector('[data-rpv-node-id="safe-node"]')).toBeInstanceOf(
       HTMLAnchorElement,
     );
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="safe-node"]')!.style
+        .textDecoration,
+    ).toBe('none');
     expect(container.querySelector('[data-rpv-node-id="unsafe-node"]')).not.toBeInstanceOf(
       HTMLAnchorElement,
     );
@@ -257,6 +261,8 @@ describe('normalized viewer safety and fidelity', () => {
       '#section',
       'mailto:test@example.com',
     ]);
+    expect(links.every((link) => link.style.textDecoration === 'none')).toBe(true);
+    expect(links.every((link) => link.style.color === 'inherit')).toBe(true);
     expect(
       [...container.querySelectorAll('[data-rpv-node-id="run-links"] span')].some(
         (node) => node.textContent === 'Unsafe',
@@ -513,6 +519,30 @@ describe('normalized viewer safety and fidelity', () => {
               line: { color: { value: '#4472c4' }, width: 1 },
               paragraphs: [],
             },
+            {
+              id: 'straight-connector',
+              type: 'shape',
+              transform: { ...transform, x: 4_500_000 },
+              geometry: { preset: 'straightConnector1' },
+              line: { color: { value: '#ffffff' }, width: 1 },
+              paragraphs: [],
+            },
+            {
+              id: 'vertical-connector',
+              type: 'shape',
+              transform: { ...transform, x: 5_500_000, width: 0 },
+              geometry: { preset: 'straightConnector1' },
+              line: { color: { value: '#000000' }, width: 1 },
+              paragraphs: [],
+            },
+            {
+              id: 'diagonal-stripe',
+              type: 'shape',
+              transform: { ...transform, x: 6_000_000 },
+              geometry: { preset: 'diagStripe' },
+              fill: { type: 'solid', color: { value: '#4472c4' } },
+              paragraphs: [],
+            },
           ],
         },
       ],
@@ -542,6 +572,25 @@ describe('normalized viewer safety and fidelity', () => {
       'M 0.5 0.25 C 0.7083333333 -0.3333333333 1.5208333333 0.25 0.5 1 C -0.5208333333 0.25 0.2916666667 -0.3333333333 0.5 0.25 Z',
     );
     expect(heartPath.style.fill).toMatch(/#ff0000|rgb\(255, 0, 0\)/i);
+    const connectorPath = container.querySelector<SVGPathElement>(
+      '[data-rpv-node-id="straight-connector"] [data-rpv-custom-geometry] path',
+    )!;
+    expect(connectorPath.getAttribute('d')).toBe('M 0 0 L 1 1');
+    expect(connectorPath.style.fill).toBe('none');
+    expect(connectorPath.style.stroke).toMatch(/#ffffff|rgb\(255, 255, 255\)/i);
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="straight-connector"]')!.style
+        .border,
+    ).toBe('');
+    const verticalConnector = container.querySelector<SVGSVGElement>(
+      '[data-rpv-node-id="vertical-connector"] [data-rpv-custom-geometry]',
+    )!;
+    expect(verticalConnector.style.width).toBe('1px');
+    expect(verticalConnector.style.left).toBe('-0.5px');
+    expect(verticalConnector.querySelector('path')!.getAttribute('d')).toBe('M 0.5 0 L 0.5 1');
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="diagonal-stripe"]')!.style.clipPath,
+    ).toBe('polygon(0 50%, 50% 0, 100% 0, 0 100%)');
     viewer.destroy();
   });
 

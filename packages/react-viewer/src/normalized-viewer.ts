@@ -279,6 +279,10 @@ function createTextRunElement(
     span.href = href;
     span.target = '_blank';
     span.rel = 'noreferrer noopener';
+    // Browser link defaults are not part of DrawingML. PowerPoint stores
+    // hyperlink color and underline explicitly in the run properties.
+    if (!run.color) span.style.color = 'inherit';
+    if (!decorations.length) span.style.textDecoration = 'none';
   }
   return span;
 }
@@ -460,6 +464,8 @@ function applyLine(element: HTMLElement, line?: LineStyle): void {
 
 function normalizedPresetGeometryPath(preset?: string): string | undefined {
   switch (preset) {
+    case 'straightConnector1':
+      return 'M 0 0 L 1 1';
     case 'heart':
       // ECMA-376 preset geometry, normalized from w/h coordinates to 0..1.
       return 'M 0.5 0.25 C 0.7083333333 -0.3333333333 1.5208333333 0.25 0.5 1 C -0.5208333333 0.25 0.2916666667 -0.3333333333 0.5 0.25 Z';
@@ -487,6 +493,9 @@ function applyGeometry(element: HTMLElement, preset?: string): void {
       break;
     case 'parallelogram':
       element.style.clipPath = 'polygon(20% 0, 100% 0, 80% 100%, 0 100%)';
+      break;
+    case 'diagStripe':
+      element.style.clipPath = 'polygon(0 50%, 50% 0, 100% 0, 0 100%)';
       break;
     case 'hexagon':
       element.style.clipPath = 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)';
@@ -958,8 +967,21 @@ export class NormalizedPresentationViewer {
     svg.style.overflow = 'visible';
     svg.style.pointerEvents = 'none';
 
+    let renderedPathData = pathData;
+    if (node.geometry.preset === 'straightConnector1') {
+      if (node.transform.width === 0 && node.transform.height !== 0) {
+        svg.style.left = '-0.5px';
+        svg.style.width = '1px';
+        renderedPathData = 'M 0.5 0 L 0.5 1';
+      } else if (node.transform.height === 0 && node.transform.width !== 0) {
+        svg.style.top = '-0.5px';
+        svg.style.height = '1px';
+        renderedPathData = 'M 0 0.5 L 1 0.5';
+      }
+    }
+
     const path = document.createElementNS(namespace, 'path');
-    path.setAttribute('d', pathData);
+    path.setAttribute('d', renderedPathData);
     path.setAttribute('vector-effect', 'non-scaling-stroke');
     path.style.fill = 'none';
 
@@ -1189,6 +1211,8 @@ export class NormalizedPresentationViewer {
       element.href = href;
       element.target = '_blank';
       element.rel = 'noreferrer noopener';
+      element.style.color = 'inherit';
+      element.style.textDecoration = 'none';
     }
 
     if (node.type === 'shape') {

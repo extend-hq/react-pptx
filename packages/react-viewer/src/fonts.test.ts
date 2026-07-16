@@ -11,6 +11,14 @@ describe('PowerPoint font resolution', () => {
     expect(stack.indexOf('"Segoe UI"')).toBeLessThan(stack.indexOf('sans-serif'));
   });
 
+  it('does not let emoji fonts claim ordinary word spaces', () => {
+    const stack = resolvePptxFontFamily('Roboto');
+
+    expect(stack).not.toContain('Apple Color Emoji');
+    expect(stack).not.toContain('Segoe UI Emoji');
+    expect(stack).toContain('sans-serif');
+  });
+
   it('supports host overrides without duplicating families', () => {
     const stack = resolvePptxFontFamily('Brand Sans, Arial', {
       fallbacks: { 'Brand Sans': ['Inter', 'Arial'] },

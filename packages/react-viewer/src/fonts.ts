@@ -82,8 +82,6 @@ const UNIVERSAL_SANS_FALLBACKS = [
   'Noto Sans Arabic',
   'Noto Sans Hebrew',
   'Segoe UI Symbol',
-  'Apple Color Emoji',
-  'Segoe UI Emoji',
   'sans-serif',
 ] as const;
 

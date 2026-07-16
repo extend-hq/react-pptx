@@ -1,5 +1,11 @@
 # @extend-ai/react-pptx
 
+## 0.1.1
+
+### Patch Changes
+
+- Improve PowerPoint import fidelity for word spacing, hyperlink styling, diagonal stripe shapes, and straight connectors, including zero-width vertical timeline stems.
+
 ## Unreleased
 
 - Expose consumer-owned slide thumbnail rails through `usePptxViewerThumbnails`, including stable
