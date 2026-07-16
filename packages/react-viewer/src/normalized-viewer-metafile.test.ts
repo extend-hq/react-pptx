@@ -1,12 +1,12 @@
 import type { PresentationDocument } from '@extend-ai/react-pptx-model';
 import { describe, expect, it, vi } from 'vitest';
 
-const { convertEmfToDataUrl, convertWmfToDataUrl } = vi.hoisted(() => ({
-  convertEmfToDataUrl: vi.fn(async () => 'data:image/png;base64,converted'),
-  convertWmfToDataUrl: vi.fn(async () => 'data:image/png;base64,wmf'),
+const { renderEmfToDataUrl, renderWmfToDataUrl } = vi.hoisted(() => ({
+  renderEmfToDataUrl: vi.fn(async () => 'data:image/png;base64,converted'),
+  renderWmfToDataUrl: vi.fn(async () => 'data:image/png;base64,wmf'),
 }));
 
-vi.mock('emf-converter', () => ({ convertEmfToDataUrl, convertWmfToDataUrl }));
+vi.mock('./metafile-renderer', () => ({ renderEmfToDataUrl, renderWmfToDataUrl }));
 
 import { NormalizedPresentationViewer } from './normalized-viewer';
 
@@ -47,12 +47,12 @@ describe('normalized viewer metafiles', () => {
 
     await viewer.renderSlide();
 
-    expect(convertEmfToDataUrl).toHaveBeenCalledOnce();
+    expect(renderEmfToDataUrl).toHaveBeenCalledOnce();
     expect(container.querySelector('img')?.src).toBe('data:image/png;base64,converted');
 
     await viewer.renderSlide();
 
-    expect(convertEmfToDataUrl).toHaveBeenCalledOnce();
+    expect(renderEmfToDataUrl).toHaveBeenCalledOnce();
     viewer.destroy();
   });
 });

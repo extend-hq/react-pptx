@@ -386,12 +386,148 @@ select {
   border-radius: calc(var(--radius) + 2px);
 }
 
-.viewer-panel > .rpv-root {
+.viewer-content,
+.viewer-host,
+.viewer-host > .rpv-root {
   height: 100%;
+  min-height: 0;
 }
 
-.viewer-panel[data-dragging] > .rpv-root {
+.viewer-content {
+  position: relative;
+  display: flex;
+  gap: 12px;
+}
+
+.viewer-host {
+  min-width: 0;
+  flex: 1;
+}
+
+.viewer-panel[data-dragging] .viewer-content {
   opacity: 0.26;
+}
+
+.slide-rail {
+  width: 224px;
+  min-height: 0;
+  flex: 0 0 224px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--card-foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.slide-rail__header {
+  min-height: 43px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slide-rail__header strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.slide-rail__header span {
+  min-width: 22px;
+  padding: 2px 6px;
+  color: var(--muted-foreground);
+  background: var(--muted);
+  border-radius: 999px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.slide-rail__list {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 10px;
+  scrollbar-width: thin;
+}
+
+.slide-rail__sizer {
+  position: relative;
+  width: 100%;
+}
+
+.slide-rail__item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 4px;
+}
+
+.slide-rail__empty {
+  padding: 24px 8px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  text-align: center;
+}
+
+.slide-thumbnail {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 8px 6px;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.slide-thumbnail:hover {
+  color: var(--foreground);
+  background: var(--muted);
+}
+
+.slide-thumbnail:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 32%, transparent);
+}
+
+.slide-thumbnail__number {
+  padding-top: 4px;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+}
+
+.slide-thumbnail__preview {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: oklch(0.985 0 0);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px oklch(0.145 0 0 / 5%);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.slide-thumbnail[data-active] {
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--accent) 72%, transparent);
+}
+
+.slide-thumbnail[data-active] .slide-thumbnail__preview {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 25%, transparent);
 }
 
 .drop-overlay {
@@ -483,7 +619,6 @@ select {
   padding: 0;
 }
 
-.playground-shell .rpv-filmstrip,
 .playground-shell .rpv-diagnostics {
   order: 2;
   width: 246px;
@@ -491,25 +626,6 @@ select {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-}
-
-.playground-shell .rpv-filmstrip {
-  padding: 14px;
-}
-
-.playground-shell .rpv-thumbnail {
-  padding-left: 24px;
-}
-
-.playground-shell .rpv-thumbnail__canvas {
-  border-color: var(--border);
-  border-radius: 4px;
-  box-shadow: 0 1px 2px oklch(0.145 0 0 / 5%);
-}
-
-.playground-shell .rpv-thumbnail[data-active] .rpv-thumbnail__canvas {
-  border-color: var(--ring);
-  box-shadow: 0 0 0 2px color-mix(in oklch, var(--ring) 25%, transparent);
 }
 
 .playground-shell .rpv-diagnostics {
@@ -548,10 +664,14 @@ select {
     padding: 10px;
   }
 
-  .playground-shell .rpv-filmstrip,
   .playground-shell .rpv-diagnostics {
     width: 200px;
     flex-basis: 200px;
+  }
+
+  .slide-rail {
+    width: 224px;
+    flex-basis: 224px;
   }
 }
 
@@ -580,12 +700,19 @@ select {
     order: -1;
   }
 
-  .playground-shell .rpv-filmstrip,
   .playground-shell .rpv-diagnostics {
     position: absolute;
     z-index: 5;
     right: 0;
     height: 100%;
+  }
+
+  .slide-rail {
+    position: absolute;
+    z-index: 5;
+    inset: 0 auto 0 0;
+    width: min(224px, calc(100% - 36px));
+    box-shadow: 8px 0 24px oklch(0.145 0 0 / 12%);
   }
 }
 

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use pptx_core::{
     ChartSeries, ColorValue, FillStyle, LineStyle, ShapeGeometry, SlideNode, TableCell, TextBullet,
-    TextParagraph, TextRun, TextSpacing, TextSpacingUnit, Transform, VerticalAlignment,
+    TextParagraph, TextRun, TextSpacing, TextSpacingUnit, TextTabAlignment, TextTabStop, Transform,
+    VerticalAlignment,
 };
 use serde_json::json;
 
@@ -198,6 +199,9 @@ fn rich_text_fields_serialize_to_the_typescript_model_contract() {
         runs: vec![TextRun {
             text: "Linked".into(),
             font_family: Some("Aptos".into()),
+            east_asian_font_family: Some("Yu Gothic".into()),
+            complex_script_font_family: Some("Noto Naskh Arabic".into()),
+            symbol_font_family: Some("Symbol".into()),
             font_size_pt: Some(18.0),
             bold: Some(true),
             italic: Some(false),
@@ -209,8 +213,11 @@ fn rich_text_fields_serialize_to_the_typescript_model_contract() {
             }),
             baseline: Some(30.0),
             language: Some("en-US".into()),
+            alternative_language: Some("ja-JP".into()),
+            right_to_left: Some(false),
             hyperlink: Some("https://example.com".into()),
             character_spacing_pt: Some(-0.08),
+            kerning_threshold_pt: Some(12.0),
         }],
         alignment: Some("center".into()),
         level: Some(1),
@@ -237,6 +244,14 @@ fn rich_text_fields_serialize_to_the_typescript_model_contract() {
         rtl: Some(true),
         margin_left_emu: None,
         indent_emu: None,
+        default_tab_size_emu: Some(914_400),
+        tab_stops: Some(vec![TextTabStop {
+            position_emu: 1_234_440,
+            alignment: TextTabAlignment::Left,
+        }]),
+        east_asian_line_break: Some(true),
+        latin_line_break: Some(false),
+        hanging_punctuation: Some(true),
     };
 
     let value = serde_json::to_value(paragraph).unwrap();
@@ -255,5 +270,10 @@ fn rich_text_fields_serialize_to_the_typescript_model_contract() {
     assert_eq!(value["runs"][0]["color"]["value"], "#123456");
     assert_eq!(value["runs"][0]["hyperlink"], "https://example.com");
     assert_eq!(value["runs"][0]["characterSpacingPt"], -0.08);
+    assert_eq!(value["runs"][0]["eastAsianFontFamily"], "Yu Gothic");
+    assert_eq!(value["runs"][0]["kerningThresholdPt"], 12.0);
+    assert_eq!(value["defaultTabSizeEmu"], 914_400);
+    assert_eq!(value["tabStops"][0]["positionEmu"], 1_234_440);
+    assert_eq!(value["tabStops"][0]["alignment"], "left");
     assert!(value["runs"][0].get("font_family").is_none());
 }

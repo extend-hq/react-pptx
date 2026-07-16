@@ -103,6 +103,12 @@ export interface LineStyle {
 export interface TextRun {
   text: string;
   fontFamily?: string;
+  /** Explicit East Asian typeface declared for this run. */
+  eastAsianFontFamily?: string;
+  /** Explicit complex-script typeface declared for this run. */
+  complexScriptFontFamily?: string;
+  /** Explicit symbol typeface declared for this run. */
+  symbolFontFamily?: string;
   fontSizePt?: number;
   bold?: boolean;
   italic?: boolean;
@@ -113,7 +119,17 @@ export interface TextRun {
   /** OOXML run character spacing, in points. */
   characterSpacingPt?: number;
   language?: string;
+  alternativeLanguage?: string;
+  /** Run-level bidi override from DrawingML. */
+  rightToLeft?: boolean;
+  /** Minimum font size, in points, at which pair kerning is enabled. */
+  kerningThresholdPt?: number;
   hyperlink?: string;
+}
+
+export interface TextTabStop {
+  positionEmu: number;
+  alignment: 'left' | 'center' | 'right' | 'decimal';
 }
 
 export interface TextSpacing {
@@ -143,6 +159,13 @@ export interface TextParagraph {
   marginLeftEmu?: number;
   /** Exact OOXML first-line or hanging indent, in EMUs. */
   indentEmu?: number;
+  /** Default interval used for tabs without an explicit stop, in EMUs. */
+  defaultTabSizeEmu?: number;
+  /** Explicit DrawingML paragraph tab stops. */
+  tabStops?: TextTabStop[];
+  eastAsianLineBreak?: boolean;
+  latinLineBreak?: boolean;
+  hangingPunctuation?: boolean;
 }
 
 export interface TextAutofit {

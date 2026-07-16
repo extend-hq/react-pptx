@@ -68,6 +68,16 @@
   border-right: 1px solid var(--rpv-rule);
   background: var(--rpv-panel);
 }
+.rpv-filmstrip__sizer {
+  position: relative;
+  width: 100%;
+}
+.rpv-filmstrip__item {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+}
 .rpv-thumbnail {
   position: relative;
   display: block;

@@ -88,6 +88,20 @@ const CHART_STYLE_REL_TYPE: &str =
 const CHART_COLOR_STYLE_REL_TYPE: &str =
     "http://schemas.microsoft.com/office/2011/relationships/chartColorStyle";
 
+fn is_chart_relationship_type(relationship_type: &str) -> bool {
+    matches!(
+        relationship_type.rsplit('/').next(),
+        Some("chart" | "chartEx")
+    )
+}
+
+fn is_diagram_relationship_type(relationship_type: &str) -> bool {
+    relationship_type
+        .rsplit('/')
+        .next()
+        .is_some_and(|name| name.starts_with("diagram"))
+}
+
 /// Companion Microsoft chart style parts resolved from a chart part's rels.
 #[derive(Debug, Clone, Default)]
 struct ChartCompanionParts {
@@ -203,17 +217,16 @@ fn parse_presentation_xml(
                     b"sldId" => {
                         if let Some(id) =
                             attr(&start, b"id")
-                                .filter(|value| value.starts_with("rId"))
+                                .filter(|value| rels.contains_key(value))
                                 .or_else(|| {
                                     start.attributes().with_checks(false).flatten().find_map(
                                         |value| {
-                                            (local_name(value.key.as_ref()) == b"id"
-                                                && String::from_utf8_lossy(value.value.as_ref())
-                                                    .starts_with("rId"))
-                                            .then(|| {
+                                            let candidate =
                                                 String::from_utf8_lossy(value.value.as_ref())
-                                                    .into_owned()
-                                            })
+                                                    .into_owned();
+                                            (local_name(value.key.as_ref()) == b"id"
+                                                && rels.contains_key(&candidate))
+                                            .then_some(candidate)
                                         },
                                     )
                                 })
@@ -237,19 +250,18 @@ fn parse_presentation_xml(
                 }
                 b"sldId" => {
                     if let Some(id) = attr(&start, b"id")
-                        .filter(|value| value.starts_with("rId"))
+                        .filter(|value| rels.contains_key(value))
                         .or_else(|| {
                             start
                                 .attributes()
                                 .with_checks(false)
                                 .flatten()
                                 .find_map(|value| {
+                                    let candidate =
+                                        String::from_utf8_lossy(value.value.as_ref()).into_owned();
                                     (local_name(value.key.as_ref()) == b"id"
-                                        && String::from_utf8_lossy(value.value.as_ref())
-                                            .starts_with("rId"))
-                                    .then(|| {
-                                        String::from_utf8_lossy(value.value.as_ref()).into_owned()
-                                    })
+                                        && rels.contains_key(&candidate))
+                                    .then_some(candidate)
                                 })
                         })
                     {
@@ -1413,6 +1425,9 @@ fn style_matrix_line(reference: &XmlNode, context: Option<&ColorContext<'_>>) ->
 #[derive(Debug, Clone, Default)]
 struct RunStyle {
     font_family: Option<String>,
+    east_asian_font_family: Option<String>,
+    complex_script_font_family: Option<String>,
+    symbol_font_family: Option<String>,
     font_size_pt: Option<f64>,
     bold: Option<bool>,
     italic: Option<bool>,
@@ -1421,14 +1436,26 @@ struct RunStyle {
     color: Option<ColorValue>,
     baseline: Option<f64>,
     language: Option<String>,
+    alternative_language: Option<String>,
+    right_to_left: Option<bool>,
     hyperlink: Option<String>,
     character_spacing_pt: Option<f64>,
+    kerning_threshold_pt: Option<f64>,
 }
 
 impl RunStyle {
     fn overlay(mut self, other: RunStyle) -> Self {
         if other.font_family.is_some() {
             self.font_family = other.font_family;
+        }
+        if other.east_asian_font_family.is_some() {
+            self.east_asian_font_family = other.east_asian_font_family;
+        }
+        if other.complex_script_font_family.is_some() {
+            self.complex_script_font_family = other.complex_script_font_family;
+        }
+        if other.symbol_font_family.is_some() {
+            self.symbol_font_family = other.symbol_font_family;
         }
         if other.font_size_pt.is_some() {
             self.font_size_pt = other.font_size_pt;
@@ -1454,14 +1481,39 @@ impl RunStyle {
         if other.language.is_some() {
             self.language = other.language;
         }
+        if other.alternative_language.is_some() {
+            self.alternative_language = other.alternative_language;
+        }
+        if other.right_to_left.is_some() {
+            self.right_to_left = other.right_to_left;
+        }
         if other.hyperlink.is_some() {
             self.hyperlink = other.hyperlink;
         }
         if other.character_spacing_pt.is_some() {
             self.character_spacing_pt = other.character_spacing_pt;
         }
+        if other.kerning_threshold_pt.is_some() {
+            self.kerning_threshold_pt = other.kerning_threshold_pt;
+        }
         self
     }
+}
+
+fn run_font_family(
+    properties: &XmlNode,
+    element: &str,
+    colors: Option<&ColorContext<'_>>,
+) -> Option<String> {
+    properties
+        .child(element)
+        .and_then(|node| node.attr("typeface"))
+        .and_then(|typeface| {
+            colors
+                .and_then(|context| context.theme)
+                .and_then(|theme| theme.resolve_font(typeface))
+                .or_else(|| (!typeface.starts_with('+')).then(|| typeface.to_owned()))
+        })
 }
 
 fn parse_run_style(
@@ -1472,24 +1524,23 @@ fn parse_run_style(
     let Some(properties) = properties else {
         return RunStyle::default();
     };
-    let font_family = properties
-        .child("latin")
-        .or_else(|| properties.child("ea"))
-        .or_else(|| properties.child("cs"))
-        .and_then(|node| node.attr("typeface"))
-        .and_then(|typeface| {
-            colors
-                .and_then(|context| context.theme)
-                .and_then(|theme| theme.resolve_font(typeface))
-                .or_else(|| (!typeface.starts_with('+')).then(|| typeface.to_owned()))
-        });
+    let font_family = run_font_family(properties, "latin", colors);
+    let east_asian_font_family = run_font_family(properties, "ea", colors);
+    let complex_script_font_family = run_font_family(properties, "cs", colors);
+    let symbol_font_family = run_font_family(properties, "sym", colors);
     let hyperlink = properties
         .child("hlinkClick")
         .and_then(|link| link.attr("id"))
         .and_then(|id| rels.get(id))
         .cloned();
     RunStyle {
-        font_family,
+        font_family: font_family
+            .clone()
+            .or_else(|| east_asian_font_family.clone())
+            .or_else(|| complex_script_font_family.clone()),
+        east_asian_font_family,
+        complex_script_font_family,
+        symbol_font_family,
         font_size_pt: properties
             .attr("sz")
             .and_then(|value| value.parse::<f64>().ok())
@@ -1508,9 +1559,17 @@ fn parse_run_style(
             .and_then(|value| value.parse::<f64>().ok())
             .map(|value| value / 1_000.0),
         language: properties.attr("lang").map(str::to_owned),
+        alternative_language: properties.attr("altLang").map(str::to_owned),
+        right_to_left: properties
+            .child("rtl")
+            .map(|node| node.attr("val").and_then(bool_value).unwrap_or(true)),
         hyperlink,
         character_spacing_pt: properties
             .attr("spc")
+            .and_then(|value| value.parse::<f64>().ok())
+            .map(|value| value / 100.0),
+        kerning_threshold_pt: properties
+            .attr("kern")
             .and_then(|value| value.parse::<f64>().ok())
             .map(|value| value / 100.0),
     }
@@ -1520,6 +1579,9 @@ fn text_run(text: String, style: RunStyle) -> TextRun {
     TextRun {
         text,
         font_family: style.font_family,
+        east_asian_font_family: style.east_asian_font_family,
+        complex_script_font_family: style.complex_script_font_family,
+        symbol_font_family: style.symbol_font_family,
         font_size_pt: style.font_size_pt,
         bold: style.bold,
         italic: style.italic,
@@ -1528,8 +1590,11 @@ fn text_run(text: String, style: RunStyle) -> TextRun {
         color: style.color,
         baseline: style.baseline,
         language: style.language,
+        alternative_language: style.alternative_language,
+        right_to_left: style.right_to_left,
         hyperlink: style.hyperlink,
         character_spacing_pt: style.character_spacing_pt,
+        kerning_threshold_pt: style.kerning_threshold_pt,
     }
 }
 
@@ -1544,6 +1609,11 @@ struct ParagraphStyle {
     rtl: Option<bool>,
     margin_left_emu: Option<i64>,
     indent_emu: Option<i64>,
+    default_tab_size_emu: Option<i64>,
+    tab_stops: Option<Vec<crate::TextTabStop>>,
+    east_asian_line_break: Option<bool>,
+    latin_line_break: Option<bool>,
+    hanging_punctuation: Option<bool>,
 }
 
 impl ParagraphStyle {
@@ -1574,6 +1644,21 @@ impl ParagraphStyle {
         }
         if other.indent_emu.is_some() {
             self.indent_emu = other.indent_emu;
+        }
+        if other.default_tab_size_emu.is_some() {
+            self.default_tab_size_emu = other.default_tab_size_emu;
+        }
+        if other.tab_stops.is_some() {
+            self.tab_stops = other.tab_stops;
+        }
+        if other.east_asian_line_break.is_some() {
+            self.east_asian_line_break = other.east_asian_line_break;
+        }
+        if other.latin_line_break.is_some() {
+            self.latin_line_break = other.latin_line_break;
+        }
+        if other.hanging_punctuation.is_some() {
+            self.hanging_punctuation = other.hanging_punctuation;
         }
         self
     }
@@ -1661,6 +1746,23 @@ fn parse_paragraph_style(properties: Option<&XmlNode>) -> ParagraphStyle {
     } else {
         None
     };
+    let tab_stops = properties.child("tabLst").map(|list| {
+        list.children_named("tab")
+            .filter_map(|tab| {
+                let position_emu = tab.attr("pos")?.parse::<i64>().ok()?;
+                let alignment = match tab.attr("algn") {
+                    Some("ctr") => crate::TextTabAlignment::Center,
+                    Some("r") => crate::TextTabAlignment::Right,
+                    Some("dec") => crate::TextTabAlignment::Decimal,
+                    _ => crate::TextTabAlignment::Left,
+                };
+                Some(crate::TextTabStop {
+                    position_emu,
+                    alignment,
+                })
+            })
+            .collect()
+    });
     ParagraphStyle {
         alignment,
         level: properties
@@ -1677,6 +1779,13 @@ fn parse_paragraph_style(properties: Option<&XmlNode>) -> ParagraphStyle {
         indent_emu: properties
             .attr("indent")
             .and_then(|value| value.parse::<i64>().ok()),
+        default_tab_size_emu: properties
+            .attr("defTabSz")
+            .and_then(|value| value.parse::<i64>().ok()),
+        tab_stops,
+        east_asian_line_break: properties.attr("eaLnBrk").and_then(bool_value),
+        latin_line_break: properties.attr("latinLnBrk").and_then(bool_value),
+        hanging_punctuation: properties.attr("hangingPunct").and_then(bool_value),
     }
 }
 
@@ -1802,6 +1911,14 @@ fn parse_text_paragraphs(
                         ));
                         runs.push(text_run("\n".into(), style));
                     }
+                    "tab" => {
+                        let style = default_style.clone().overlay(parse_run_style(
+                            child.child("rPr"),
+                            context.colors,
+                            context.rels,
+                        ));
+                        runs.push(text_run("\t".into(), style));
+                    }
                     "t" => runs.push(text_run(child.text_content(), default_style.clone())),
                     _ => {}
                 }
@@ -1820,6 +1937,11 @@ fn parse_text_paragraphs(
                 rtl: paragraph_style.rtl,
                 margin_left_emu: paragraph_style.margin_left_emu,
                 indent_emu: paragraph_style.indent_emu,
+                default_tab_size_emu: paragraph_style.default_tab_size_emu,
+                tab_stops: paragraph_style.tab_stops,
+                east_asian_line_break: paragraph_style.east_asian_line_break,
+                latin_line_break: paragraph_style.latin_line_break,
+                hanging_punctuation: paragraph_style.hanging_punctuation,
             }
         })
         .collect()
@@ -1906,19 +2028,19 @@ fn shape_font_style(node: Option<&XmlNode>, colors: Option<&ColorContext<'_>>) -
     else {
         return RunStyle::default();
     };
-    let font_family = match reference.attr("idx") {
+    let fonts = match reference.attr("idx") {
         Some("major") => colors
             .and_then(|context| context.theme)
-            .and_then(|theme| theme.major_fonts.get("latin"))
-            .cloned(),
+            .map(|theme| &theme.major_fonts),
         Some("minor") => colors
             .and_then(|context| context.theme)
-            .and_then(|theme| theme.minor_fonts.get("latin"))
-            .cloned(),
+            .map(|theme| &theme.minor_fonts),
         _ => None,
     };
     RunStyle {
-        font_family,
+        font_family: fonts.and_then(|fonts| fonts.get("latin")).cloned(),
+        east_asian_font_family: fonts.and_then(|fonts| fonts.get("eastAsia")).cloned(),
+        complex_script_font_family: fonts.and_then(|fonts| fonts.get("complexScript")).cloned(),
         color: parse_color(reference, colors),
         ..Default::default()
     }
@@ -2510,17 +2632,15 @@ fn table_region_text_style(region: &XmlNode, context: &NodeParseContext<'_, '_>)
         return RunStyle::default();
     };
     let reference = style.child("fontRef");
-    let font_family = match reference.and_then(|reference| reference.attr("idx")) {
+    let fonts = match reference.and_then(|reference| reference.attr("idx")) {
         Some("major") => context
             .colors
             .and_then(|colors| colors.theme)
-            .and_then(|theme| theme.major_fonts.get("latin"))
-            .cloned(),
+            .map(|theme| &theme.major_fonts),
         Some("minor") => context
             .colors
             .and_then(|colors| colors.theme)
-            .and_then(|theme| theme.minor_fonts.get("latin"))
-            .cloned(),
+            .map(|theme| &theme.minor_fonts),
         _ => None,
     };
     let color = style
@@ -2535,7 +2655,9 @@ fn table_region_text_style(region: &XmlNode, context: &NodeParseContext<'_, '_>)
         .and_then(|color| parse_color(color, context.colors))
         .or_else(|| reference.and_then(|reference| parse_color(reference, context.colors)));
     RunStyle {
-        font_family,
+        font_family: fonts.and_then(|fonts| fonts.get("latin")).cloned(),
+        east_asian_font_family: fonts.and_then(|fonts| fonts.get("eastAsia")).cloned(),
+        complex_script_font_family: fonts.and_then(|fonts| fonts.get("complexScript")).cloned(),
         bold: style.attr("b").and_then(bool_value),
         italic: style.attr("i").and_then(bool_value),
         color,
@@ -3798,11 +3920,12 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
         let xml = read_entry(&mut archive, slide_path, limits)?
             .ok_or_else(|| ParseError::Corrupt(format!("missing {slide_path}")))?;
         let slide_root = parse_xml_tree(&xml, limits, slide_path)?;
-        let slide_rels =
-            match read_entry(&mut archive, &relationship_part_path(slide_path), limits)? {
-                Some(bytes) => relationships(&bytes, slide_path, limits.max_xml_depth)?,
-                None => HashMap::new(),
-            };
+        let slide_relationship_xml =
+            read_entry(&mut archive, &relationship_part_path(slide_path), limits)?;
+        let slide_rels = match slide_relationship_xml.as_deref() {
+            Some(bytes) => relationships(bytes, slide_path, limits.max_xml_depth)?,
+            None => HashMap::new(),
+        };
 
         let layout_path = related_path(&slide_rels, "ppt/slideLayouts/");
         if let Some(path) = layout_path.as_deref() {
@@ -3854,18 +3977,29 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
             .and_then(|path| theme_parts.get(path))
             .cloned();
 
-        let related_paths = slide_rels
-            .values()
-            .filter(|target| {
-                target.starts_with("ppt/charts/") || target.starts_with("ppt/diagrams/")
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut related_paths = BTreeMap::<String, bool>::new();
+        for target in slide_rels.values().filter(|target| {
+            target.starts_with("ppt/charts/") || target.starts_with("ppt/diagrams/")
+        }) {
+            related_paths.insert(target.clone(), target.starts_with("ppt/charts/"));
+        }
+        if let Some(bytes) = slide_relationship_xml.as_deref() {
+            for (relationship_type, target) in
+                relationship_targets_by_type(bytes, slide_path, limits.max_xml_depth)?
+            {
+                let is_chart = is_chart_relationship_type(&relationship_type);
+                if is_chart || is_diagram_relationship_type(&relationship_type) {
+                    related_paths
+                        .entry(target)
+                        .and_modify(|existing| *existing |= is_chart)
+                        .or_insert(is_chart);
+                }
+            }
+        }
         let mut related_parts = HashMap::new();
         let mut chart_companions: HashMap<String, ChartCompanionParts> = HashMap::new();
-        for target in related_paths {
+        for (target, is_chart_part) in related_paths {
             if let Some(bytes) = read_entry(&mut archive, &target, limits)? {
-                let is_chart_part = target.starts_with("ppt/charts/");
                 related_parts.insert(target.clone(), bytes);
                 if !is_chart_part || chart_companions.contains_key(&target) {
                     continue;

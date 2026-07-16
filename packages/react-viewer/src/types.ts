@@ -109,6 +109,79 @@ export interface ThumbnailRenderContext {
   goToSlide: () => void;
 }
 
+export type PptxSlideThumbnailResolution =
+  | number
+  | {
+      maxHeight?: number;
+      maxWidth?: number;
+    };
+
+export interface PptxSlideThumbnailRenderOptions {
+  /** Rendered thumbnail width in CSS pixels. */
+  width?: number;
+}
+
+export interface PptxSlideThumbnailRenderWindow {
+  /**
+   * Slide indexes whose attached thumbnail containers should render first.
+   *
+   * Use this for the thumbnails currently mounted in a virtualized rail.
+   */
+  visibleSlideIndexes?: readonly number[];
+  /**
+   * Slide indexes to render into a detached cache after visible thumbnails.
+   * Prefetched slides are adopted when their container mounts.
+   */
+  prefetchSlideIndexes?: readonly number[];
+}
+
+export interface UsePptxViewerThumbnailsOptions {
+  /** Desired thumbnail bounds. A number constrains both dimensions. Default `160`. */
+  resolution?: PptxSlideThumbnailResolution;
+  /** Prioritizes and prefetches slides for consumer-owned virtualized thumbnail rails. */
+  renderWindow?: PptxSlideThumbnailRenderWindow;
+  /** Prevent rendering while preserving stable thumbnail metadata. Default `false`. */
+  disabled?: boolean;
+}
+
+export type PptxSlideThumbnailStatus = 'idle' | 'rendering' | 'ready' | 'error';
+
+export interface PptxSlideThumbnailItem {
+  /** Source slide aspect ratio. */
+  aspectRatio: number;
+  /** Natural slide height in CSS pixels. */
+  contentHeight: number;
+  /** Natural slide width in CSS pixels. */
+  contentWidth: number;
+  /** Stable ref callback that renders into an attached consumer-owned element. */
+  containerRef: (element: HTMLElement | null) => void;
+  /** Last thumbnail rendering error, if any. */
+  error?: Error;
+  /** Rendered thumbnail height in CSS pixels. */
+  height: number;
+  /** Normalized source slide represented by this thumbnail. */
+  slide: PresentationDocument['slides'][number];
+  /** Zero-based slide index. */
+  slideIndex: number;
+  /** One-based slide number for display. */
+  slideNumber: number;
+  /** Current thumbnail render status. */
+  status: PptxSlideThumbnailStatus;
+  /** Renders this thumbnail into a consumer-owned element. */
+  renderToContainer: (element: HTMLElement) => Promise<void>;
+  /** Rendered thumbnail width in CSS pixels. */
+  width: number;
+}
+
+export interface PptxViewerThumbnails {
+  /** Renders the requested slide into a consumer-owned element. */
+  renderThumbnail: (slideIndex: number, element: HTMLElement) => Promise<void>;
+  /** Re-renders every thumbnail currently attached through `containerRef`. */
+  rerenderAttachedThumbnails: () => Promise<void>;
+  /** Thumbnail metadata and render helpers for each slide. */
+  thumbnails: PptxSlideThumbnailItem[];
+}
+
 export interface PptxViewerController {
   goToSlide(index: number, scrollOptions?: ScrollIntoViewOptions): Promise<void>;
   next(): Promise<void>;
@@ -121,6 +194,14 @@ export interface PptxViewerController {
     options?: SearchHighlightOptions,
   ): Promise<void>;
   clearSearchHighlights(): void;
+  /** True after the slide renderer is ready to service thumbnail requests. */
+  isReady(): boolean;
+  /** Renders a detached slide thumbnail and returns its cleanup function. */
+  renderThumbnail(
+    index: number,
+    target: HTMLElement,
+    options?: PptxSlideThumbnailRenderOptions,
+  ): Promise<() => void>;
   getDocument(): PresentationDocument | null;
   getSlideIndex(): number;
   getZoom(): number;

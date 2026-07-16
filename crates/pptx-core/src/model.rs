@@ -396,6 +396,32 @@ pub struct TextParagraph {
     pub margin_left_emu: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indent_emu: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_tab_size_emu: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab_stops: Option<Vec<TextTabStop>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub east_asian_line_break: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latin_line_break: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hanging_punctuation: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextTabAlignment {
+    Left,
+    Center,
+    Right,
+    Decimal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextTabStop {
+    pub position_emu: i64,
+    pub alignment: TextTabAlignment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -435,6 +461,12 @@ pub struct TextRun {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub east_asian_font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub complex_script_font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub symbol_font_family: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub font_size_pt: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bold: Option<bool>,
@@ -451,9 +483,15 @@ pub struct TextRun {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub alternative_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_to_left: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub hyperlink: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub character_spacing_pt: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kerning_threshold_pt: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

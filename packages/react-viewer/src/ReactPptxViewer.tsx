@@ -8,6 +8,7 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
+import { useVirtualizer, type VirtualizerOptions } from '@tanstack/react-virtual';
 import type { PresentationSearchResult } from '@extend-ai/react-pptx-model';
 import { PptxViewerError, toPptxViewerError } from './errors';
 import { PptxFontManager } from './fonts';
@@ -39,6 +40,28 @@ interface AdapterState {
   adapter: ViewerAdapter;
   generation: number;
 }
+
+const THUMBNAIL_ROW_ESTIMATE = 123;
+const THUMBNAIL_OVERSCAN = 3;
+const THUMBNAIL_INITIAL_RECT = { height: 780, width: 184 };
+const observeThumbnailFilmstripRect: NonNullable<
+  VirtualizerOptions<HTMLElement, HTMLElement>['observeElementRect']
+> = (instance, callback) => {
+  const element = instance.scrollElement;
+  if (!element) return;
+  const publish = () => {
+    const rect = element.getBoundingClientRect();
+    callback({
+      height: rect.height || element.clientHeight || THUMBNAIL_INITIAL_RECT.height,
+      width: rect.width || element.clientWidth || THUMBNAIL_INITIAL_RECT.width,
+    });
+  };
+  publish();
+  if (typeof ResizeObserver === 'undefined') return;
+  const observer = new ResizeObserver(publish);
+  observer.observe(element);
+  return () => observer.disconnect();
+};
 
 const clampSlide = (index: number, count: number): number =>
   Math.max(0, Math.min(Math.max(0, count - 1), Math.floor(index)));
@@ -265,6 +288,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       ...divProps
     } = props;
     const viewportRef = useRef<HTMLDivElement>(null);
+    const filmstripRef = useRef<HTMLElement>(null);
     const adapterRef = useRef<ViewerAdapter | undefined>(undefined);
     const adapterGenerationRef = useRef(0);
     const latestPropsRef = useRef(props);
@@ -300,6 +324,28 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     latestSlideRef.current = slide;
     latestZoomRef.current = zoom;
     latestFitModeRef.current = fitMode;
+    const thumbnailCount = showThumbnails ? (parsed?.document.slides.length ?? 0) : 0;
+    const getThumbnailKey = useCallback(
+      (index: number) => parsed?.document.slides[index]?.id ?? index,
+      [parsed],
+    );
+    const thumbnailVirtualizer = useVirtualizer({
+      count: thumbnailCount,
+      enabled: thumbnailCount > 0,
+      estimateSize: () => THUMBNAIL_ROW_ESTIMATE,
+      getItemKey: getThumbnailKey,
+      getScrollElement: () => filmstripRef.current,
+      initialRect: THUMBNAIL_INITIAL_RECT,
+      observeElementRect: observeThumbnailFilmstripRect,
+      overscan: THUMBNAIL_OVERSCAN,
+      useFlushSync: false,
+    });
+    const virtualThumbnails = thumbnailVirtualizer.getVirtualItems();
+
+    useEffect(() => {
+      if (!showThumbnails || thumbnailCount === 0) return;
+      thumbnailVirtualizer.scrollToIndex(slide, { align: 'auto' });
+    }, [showThumbnails, slide, thumbnailCount, thumbnailVirtualizer]);
 
     const controller = useMemo<PptxViewerController>(
       () => ({
@@ -309,10 +355,16 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
           await adapterRef.current?.goToSlide(next, options);
         },
         async next() {
-          await this.goToSlide(slide + 1, { behavior: 'smooth', block: 'center' });
+          await this.goToSlide(latestSlideRef.current + 1, {
+            behavior: 'smooth',
+            block: 'center',
+          });
         },
         async previous() {
-          await this.goToSlide(slide - 1, { behavior: 'smooth', block: 'center' });
+          await this.goToSlide(latestSlideRef.current - 1, {
+            behavior: 'smooth',
+            block: 'center',
+          });
         },
         async setZoom(percent) {
           const next = Math.max(10, Math.min(400, percent));
@@ -332,11 +384,21 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         clearSearchHighlights() {
           adapterRef.current?.clearHighlights();
         },
+        isReady: () => Boolean(adapterRef.current),
+        async renderThumbnail(index, target, options) {
+          const adapter = adapterRef.current;
+          if (!adapter) throw new Error('The PowerPoint viewer is not ready to render thumbnails.');
+          const count = parsed?.document.slides.length ?? 0;
+          if (!Number.isInteger(index) || index < 0 || index >= count) {
+            throw new RangeError(`Slide ${index} does not exist.`);
+          }
+          return adapter.renderThumbnail(index, target, options?.width ?? 144);
+        },
         getDocument: () => parsed?.document ?? null,
-        getSlideIndex: () => slide,
-        getZoom: () => zoom,
+        getSlideIndex: () => latestSlideRef.current,
+        getZoom: () => latestZoomRef.current,
       }),
-      [parsed, slide, zoom],
+      [adapterState?.generation, parsed],
     );
     useImperativeHandle(forwardedRef, () => controller, [controller]);
 
@@ -587,29 +649,44 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         ) : null}
         <div className="rpv-workspace">
           {showThumbnails && parsed ? (
-            <nav className="rpv-filmstrip" aria-label="Slide thumbnails">
-              {parsed.document.slides.map((item, index) =>
-                renderThumbnail ? (
-                  <div key={item.id}>
-                    {renderThumbnail({
-                      slideIndex: index,
-                      slideCount: parsed.document.slides.length,
-                      isCurrent: index === slide,
-                      goToSlide: () => go(index),
-                    })}
-                  </div>
-                ) : adapterState ? (
-                  <Thumbnail
-                    key={item.id}
-                    adapter={adapterState.adapter}
-                    index={index}
-                    active={index === slide}
-                    width={144}
-                    onSelect={() => go(index)}
-                    {...(onThumbnailRendered ? { onRendered: onThumbnailRendered } : {})}
-                  />
-                ) : null,
-              )}
+            <nav ref={filmstripRef} className="rpv-filmstrip" aria-label="Slide thumbnails">
+              <div
+                className="rpv-filmstrip__sizer"
+                style={{ height: thumbnailVirtualizer.getTotalSize() }}
+              >
+                {virtualThumbnails.map((virtualThumbnail) => {
+                  const item = parsed.document.slides[virtualThumbnail.index];
+                  if (!item) return null;
+                  const index = virtualThumbnail.index;
+                  return (
+                    <div
+                      key={virtualThumbnail.key}
+                      ref={thumbnailVirtualizer.measureElement}
+                      className="rpv-filmstrip__item"
+                      data-index={index}
+                      style={{ transform: `translateY(${virtualThumbnail.start}px)` }}
+                    >
+                      {renderThumbnail ? (
+                        renderThumbnail({
+                          slideIndex: index,
+                          slideCount: parsed.document.slides.length,
+                          isCurrent: index === slide,
+                          goToSlide: () => go(index),
+                        })
+                      ) : adapterState ? (
+                        <Thumbnail
+                          adapter={adapterState.adapter}
+                          index={index}
+                          active={index === slide}
+                          width={144}
+                          onSelect={() => go(index)}
+                          {...(onThumbnailRendered ? { onRendered: onThumbnailRendered } : {})}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
             </nav>
           ) : null}
           <main className="rpv-stage">

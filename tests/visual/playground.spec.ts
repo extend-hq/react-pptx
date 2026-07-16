@@ -14,9 +14,14 @@ test('renders the generated PPTX and exposes viewer controls', async ({ page }) 
     .evaluate((element) => element.style.fontFamily);
   expect(titleFontStack).toContain('Aptos Display');
   expect(titleFontStack).toContain('Noto Sans CJK JP');
-  await page.getByRole('button', { name: 'Slides' }).click();
+  await expect(page.getByRole('navigation', { name: 'Slide thumbnails' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Go to slide 1' })).toBeVisible();
   await expect(page.getByText('A deterministic PowerPoint fixture').last()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Slides' }).click();
+  await expect(page.getByRole('navigation', { name: 'Slide thumbnails' })).toBeHidden();
+  await page.getByRole('button', { name: 'Slides' }).click();
+  await expect(page.getByRole('navigation', { name: 'Slide thumbnails' })).toBeVisible();
 
   await page.getByRole('textbox', { name: 'Search slide text' }).fill('Measured');
   await expect(page.getByText('1 hits')).toBeVisible();
@@ -53,15 +58,14 @@ test('loads and renders a real-world legacy PPT file', async ({ page }) => {
     .setInputFiles('tests/fixtures/legacy/file-example-250kb.ppt');
 
   await expect(page.getByText('PPT · 3 slides')).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Slide 1 of 3' })).toContainText('Lorem ipsum');
-  await expect(page.getByTestId('pptx-viewport')).not.toContainText(
-    'Click to edit the title text format',
-  );
+  const viewport = page.getByTestId('pptx-viewport');
+  await expect(viewport.getByRole('region', { name: 'Slide 1 of 3' })).toContainText('Lorem ipsum');
+  await expect(viewport).not.toContainText('Click to edit the title text format');
 
   await page.getByRole('button', { name: 'Single slide' }).click();
   await page.getByRole('button', { name: 'Next slide' }).click();
   await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('2 / 3');
-  const chartPreview = page
+  const chartPreview = viewport
     .getByRole('region', { name: 'Slide 2 of 3' })
     .getByRole('img', { name: 'Legacy picture 5122' });
   await expect(chartPreview).toHaveAttribute('src', /^data:image\/png;base64,/);
@@ -82,9 +86,8 @@ test('loads and renders a real-world legacy PPT file', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Next slide' }).click();
   await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('3 / 3');
-  await expect(page.getByRole('region', { name: 'Slide 3 of 3' })).toContainText('Table');
+  await expect(viewport.getByRole('region', { name: 'Slide 3 of 3' })).toContainText('Table');
 
-  await page.getByRole('button', { name: 'Slides' }).click();
   await expect(page.getByRole('button', { name: 'Go to slide 3' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Diagnostics' }).click();

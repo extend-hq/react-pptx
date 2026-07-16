@@ -15,7 +15,8 @@ React and React DOM are peer dependencies already present in a React application
 - `ReactPptxViewer` renders URLs, `Blob`, `ArrayBuffer`, `Uint8Array`, parsed presentations, or normalized documents.
 - `parsePresentation` performs native parsing and returns the same normalized model the viewer renders.
 - `initWasm` and `setWasmSource` support eager initialization and custom Wasm/CDN hosting.
-- `PptxViewerController` provides navigation, zoom, fit, text search, highlighting, and model access.
+- `PptxViewerController` provides navigation, zoom, fit, text search, highlighting, model access,
+  and detached thumbnail rendering.
 
 Import `@extend-ai/react-pptx/styles.css` alongside the component; the stylesheet is emitted as
 a separate package asset. Parsing and rendering are client-side; importing the JavaScript package
@@ -148,3 +149,55 @@ return (
 `usePptxPresentation` (`usePptxModel` alias) separates parsing from rendering, while
 `usePptxViewer` exposes the reactive navigation/search/zoom controller. `onViewportReady`
 provides the internal slide surface for advanced integrations and test harnesses.
+
+## Thumbnail hook
+
+`usePptxViewerThumbnails` exposes detached slide previews for a consumer-owned filmstrip. PPTX
+thumbnails use the same live DOM/SVG renderer and loaded fonts as the main viewer, so attach each
+stable `containerRef` to a regular element rather than a canvas.
+
+```tsx
+import { ReactPptxViewer, usePptxViewer, usePptxViewerThumbnails } from '@extend-ai/react-pptx';
+
+export function PresentationWithThumbnails({ file }: { file: ArrayBuffer }) {
+  const viewer = usePptxViewer();
+  const { thumbnails } = usePptxViewerThumbnails(viewer.controller, {
+    resolution: { maxWidth: 180, maxHeight: 120 },
+    renderWindow: {
+      visibleSlideIndexes: [0, 1, 2],
+      prefetchSlideIndexes: [3, 4, 5],
+    },
+  });
+
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr', gap: 16 }}>
+      <aside style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
+        {thumbnails.map((thumbnail) => (
+          <button
+            key={thumbnail.slideIndex}
+            type="button"
+            onClick={() => void viewer.controller?.goToSlide(thumbnail.slideIndex)}
+          >
+            <div
+              ref={thumbnail.containerRef}
+              style={{
+                width: thumbnail.width,
+                height: thumbnail.height,
+                overflow: 'hidden',
+              }}
+            />
+          </button>
+        ))}
+      </aside>
+      <ReactPptxViewer ref={viewer.ref} source={file} mode="slide" />
+    </div>
+  );
+}
+```
+
+The result also provides `renderThumbnail(slideIndex, element)` for imperative integrations and
+`rerenderAttachedThumbnails()` for refreshing every currently attached preview. `disabled` keeps
+the metadata stable while pausing and disposing thumbnail rendering. For large decks, virtualize
+the rail against its actual scroll element: mount `containerRef` only for virtual rows, pass those
+rows through `renderWindow.visibleSlideIndexes`, and use `prefetchSlideIndexes` to warm nearby
+slides. The built-in `showThumbnails` filmstrip follows the same windowed behavior.

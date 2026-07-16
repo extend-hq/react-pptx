@@ -319,8 +319,12 @@ fn parses_owned_presentationml_rendering_features() {
             .is_some_and(|xml| xml.contains("<c:barChart>")),
         "raw chart XML should be preserved for high-fidelity rendering"
     );
-    assert!(chart_style_xml.as_deref().is_some_and(|xml| xml.contains("chartStyle")));
-    assert!(chart_colors_xml.as_deref().is_some_and(|xml| xml.contains("colorStyle")));
+    assert!(chart_style_xml
+        .as_deref()
+        .is_some_and(|xml| xml.contains("chartStyle")));
+    assert!(chart_colors_xml
+        .as_deref()
+        .is_some_and(|xml| xml.contains("colorStyle")));
     assert_eq!(title.as_deref(), Some("Performance"));
     assert_eq!(*has_legend, Some(true));
     assert_eq!(series.len(), 2);
@@ -334,6 +338,68 @@ fn parses_owned_presentationml_rendering_features() {
         ]
     );
     assert_eq!(series[0].color.as_ref().unwrap().value, "#D8663A");
+}
+
+#[test]
+fn resolves_chart_parts_from_relationship_type_outside_the_standard_chart_folder() {
+    let mut output = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(&mut output);
+    add_file(
+        &mut zip,
+        "ppt/presentation.xml",
+        br#"<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/_rels/presentation.xml.rels",
+        br#"<Relationships><Relationship Id="rId1" Target="slides/slide1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/_rels/slide1.xml.rels",
+        br#"<Relationships><Relationship Id="rIdChart" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="charts/chart1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/slide1.xml",
+        br#"<p:sld xmlns:p="p" xmlns:a="a" xmlns:r="r" xmlns:c="c">
+          <p:cSld><p:spTree>
+            <p:nvGrpSpPr><p:cNvPr id="1" name=""/></p:nvGrpSpPr><p:grpSpPr/>
+            <p:graphicFrame>
+              <p:nvGraphicFramePr><p:cNvPr id="2" name="Chart"/></p:nvGraphicFramePr>
+              <p:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="3000000"/></p:xfrm>
+              <a:graphic><a:graphicData><c:chart r:id="rIdChart"/></a:graphicData></a:graphic>
+            </p:graphicFrame>
+          </p:spTree></p:cSld>
+        </p:sld>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/charts/chart1.xml",
+        br#"<c:chartSpace xmlns:c="c"><c:chart><c:plotArea><c:barChart><c:ser>
+          <c:tx><c:v>Series</c:v></c:tx>
+          <c:cat><c:strLit><c:pt idx="0"><c:v>A</c:v></c:pt></c:strLit></c:cat>
+          <c:val><c:numLit><c:pt idx="0"><c:v>42</c:v></c:pt></c:numLit></c:val>
+        </c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#,
+    );
+    zip.finish().unwrap();
+    let bytes = output.into_inner();
+
+    let document = pptx_core::parse_presentation(&bytes, &ParseLimits::default()).unwrap();
+    let SlideNode::Chart {
+        chart_type,
+        series,
+        chart_xml,
+        ..
+    } = &document.slides[0].nodes[0]
+    else {
+        panic!("expected chart node")
+    };
+    assert_eq!(chart_type, "bar");
+    assert_eq!(series[0].values, vec![Some(42.0)]);
+    assert!(chart_xml
+        .as_deref()
+        .is_some_and(|xml| xml.contains("barChart")));
 }
 
 #[test]

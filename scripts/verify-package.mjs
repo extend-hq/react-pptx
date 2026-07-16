@@ -54,6 +54,7 @@ try {
   // The chart stack ships as ordinary runtime dependencies; only this exact
   // set is allowed so stray packages cannot creep into the manifest.
   const allowedRuntimeDependencies = new Set([
+    '@tanstack/react-virtual',
     '@tanstack/virtual-core',
     'd3-geo',
     'd3-hierarchy',
@@ -78,11 +79,15 @@ try {
     (name) => !runtimeDependencies.has(name),
   );
   if (missingDependencies.length > 0) {
-    throw new Error(`Packed package is missing runtime dependencies: ${missingDependencies.join(', ')}`);
+    throw new Error(
+      `Packed package is missing runtime dependencies: ${missingDependencies.join(', ')}`,
+    );
   }
   for (const atlasPackage of ['us-atlas', 'world-atlas']) {
     if (runtimeDependencies.has(atlasPackage)) {
-      throw new Error(`${atlasPackage} must stay bundled in the lazy atlas chunk, not a dependency`);
+      throw new Error(
+        `${atlasPackage} must stay bundled in the lazy atlas chunk, not a dependency`,
+      );
     }
   }
 
@@ -105,7 +110,6 @@ try {
     'CHANGELOG.md',
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
-    'THIRD_PARTY_LICENSES/Apache-2.0.txt',
   ];
 
   for (const file of requiredFiles) {

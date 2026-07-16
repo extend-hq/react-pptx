@@ -1,10 +1,9 @@
 import { defineConfig } from 'tsup';
 
-// d3/regl/topojson/virtual-core ship as regular dependencies; only the
+// d3/regl/topojson/TanStack Virtual ship as regular dependencies; only the
 // TopoJSON atlas data stays bundled, inside a dynamically imported chunk so
 // consumers never download map geometry unless a deck contains a map chart.
 const bundledPackages = [
-  'emf-converter',
   /^@extend-ai\/react-pptx-(?:model|wasm)(?:\/.*)?$/,
   /^us-atlas(?:\/.*)?$/,
   /^world-atlas(?:\/.*)?$/,

@@ -18,6 +18,20 @@ const REGION_MAP_CHART_EX_XML = `<?xml version="1.0"?>
   </cx:chart>
 </cx:chartSpace>`;
 
+const DEFAULT_MARKER_SCATTER_XML = `<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">
+  <c:style val="18"/>
+  <c:chart><c:plotArea><c:scatterChart>
+    <c:scatterStyle val="lineMarker"/>
+    <c:ser>
+      <c:idx val="0"/><c:order val="0"/>
+      <c:spPr><a:ln><a:noFill/></a:ln></c:spPr>
+      <c:xVal><c:numRef><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>0.7</c:v></c:pt><c:pt idx="1"><c:v>1.8</c:v></c:pt><c:pt idx="2"><c:v>2.6</c:v></c:pt></c:numCache></c:numRef></c:xVal>
+      <c:yVal><c:numRef><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>2.7</c:v></c:pt><c:pt idx="1"><c:v>3.2</c:v></c:pt><c:pt idx="2"><c:v>0.8</c:v></c:pt></c:numCache></c:numRef></c:yVal>
+    </c:ser>
+  </c:scatterChart></c:plotArea></c:chart>
+</c:chartSpace>`;
+
 function regionMapNode(): ChartNode {
   return {
     id: 'map-chart',
@@ -47,5 +61,22 @@ describe('renderChartInto region maps', () => {
     // The world map alone contributes hundreds of country outlines.
     expect(pathsAfterAtlas).toBeGreaterThan(pathsBeforeAtlas + 100);
     container.remove();
+  });
+});
+
+describe('renderChartInto scatter markers', () => {
+  it('renders points when the marker symbol is supplied by the built-in style', () => {
+    const container = document.createElement('div');
+    const node: ChartNode = {
+      id: 'scatter-chart',
+      type: 'chart',
+      transform: { x: 0, y: 0, width: 6_096_000, height: 4_064_000 },
+      chartType: 'scatter',
+      series: [],
+      chartXml: DEFAULT_MARKER_SCATTER_XML,
+    };
+
+    expect(renderChartInto(container, node, undefined)).toBe(true);
+    expect(container.querySelectorAll('path[data-xlsx-chart-point-index]')).toHaveLength(3);
   });
 });

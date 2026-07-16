@@ -1,5 +1,11 @@
 # @extend-ai/react-pptx
 
+## Unreleased
+
+- Expose consumer-owned slide thumbnail rails through `usePptxViewerThumbnails`, including stable
+  container refs, resolution bounds, render status, imperative rendering, and cleanup. Add
+  DOCX-style visible/prefetch render windows and virtualize the built-in thumbnail scrollport.
+
 ## 0.1.0
 
 Initial public release of the React PowerPoint viewer, including:

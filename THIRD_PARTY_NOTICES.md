@@ -1,16 +1,5 @@
 # Third-party notices
 
-## emf-converter
-
-The viewer bundles a locally patched copy of
-[`emf-converter` 1.5.0](https://github.com/ChristopherVR/emf-converter) for browser-native
-rendering of EMF/WMF fallback previews embedded in legacy PowerPoint files. The compatibility
-patch corrects mapping-mode scaling and `LOGFONTW` decoding. It is licensed under the Apache
-License 2.0; its copyright and license remain with its authors.
-
-The published package includes the Apache License 2.0 text at
-`THIRD_PARTY_LICENSES/Apache-2.0.txt`.
-
 ## Chart rendering stack (vendored from @extend-ai/react-xlsx)
 
 The chart renderer and chart model builder in `src/charts/` are vendored from
@@ -33,7 +22,8 @@ The published package includes the ISC and MIT license texts at
 
 ## Virtualized scrolling
 
-The continuous-scroll mode is windowed with
-[`@tanstack/virtual-core`](https://github.com/TanStack/virtual) (MIT License,
-Copyright (c) 2021-present Tanner Linsley), declared as a regular package
-dependency.
+The continuous-scroll mode and React thumbnail rails are windowed with
+[`@tanstack/virtual-core`](https://github.com/TanStack/virtual) and
+[`@tanstack/react-virtual`](https://github.com/TanStack/virtual) (MIT License,
+Copyright (c) 2021-present Tanner Linsley), declared as regular package
+dependencies.

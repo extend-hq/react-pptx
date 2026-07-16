@@ -710,16 +710,27 @@ function buildThemeSeriesPalette(themePalette?: XlsxThemePalette | null): string
   return themeColors.length > 0 ? themeColors : SERIES_COLORS;
 }
 
-function normalizeBuiltinSurfaceStyleId(styleId: number | undefined): number | null {
+function normalizeBuiltinChartStyleId(styleId: number | undefined): number | null {
   if (typeof styleId !== 'number' || !Number.isFinite(styleId)) return null;
   return styleId >= 100 ? styleId - 100 : styleId;
+}
+
+function resolveBuiltinScatterMarkerSymbol(chart: XlsxChart): string | undefined {
+  if (!chart.chartType.startsWith('Scatter')) return undefined;
+  if (chart.scatterStyle === 'line' || chart.scatterStyle === 'smooth' || chart.scatterStyle === 'none') {
+    return undefined;
+  }
+  // An omitted c:marker delegates the symbol to the built-in chart style; it
+  // does not mean "none". The built-in style used by the python-pptx fixture
+  // (18/118) resolves its default scatter marker to a diamond.
+  return normalizeBuiltinChartStyleId(chart.chartStyleId) === 18 ? 'diamond' : 'auto';
 }
 
 function getBuiltinSurfacePalette(
   styleId: number | undefined,
   wireframe: boolean | undefined,
 ): string[] | null {
-  const normalized = normalizeBuiltinSurfaceStyleId(styleId);
+  const normalized = normalizeBuiltinChartStyleId(styleId);
   if (normalized === 34 || (wireframe === true && normalized == null)) {
     return ['#5b9bd5', '#ed7d31', '#a5a5a5'];
   }
@@ -792,6 +803,7 @@ export function applyBuiltinChartDefaults(
   if (!chart.chartColorPalette || chart.chartColorPalette.length === 0) {
     chart.chartColorPalette = seriesPalette;
   }
+  const builtinScatterMarker = resolveBuiltinScatterMarkerSymbol(chart);
 
   chart.series = chart.series.map((series, index) => {
     const fallbackColor = seriesPalette[index % seriesPalette.length];
@@ -801,6 +813,7 @@ export function applyBuiltinChartDefaults(
       lineColor: series.lineColor ?? series.color ?? fallbackColor,
       markerColor: series.markerColor ?? series.color ?? series.lineColor ?? fallbackColor,
       markerLineColor: series.markerLineColor ?? series.lineColor ?? series.color ?? fallbackColor,
+      markerSymbol: series.markerSymbol ?? builtinScatterMarker,
     };
   });
   chart.typeGroups = chart.typeGroups?.map((group, groupIndex) => ({

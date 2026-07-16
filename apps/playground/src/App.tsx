@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import wasmUrl from '@extend-ai/react-pptx/pptx_wasm_bg.wasm?url';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   ReactPptxViewer,
   setWasmSource,
   type ParsedPresentation,
-  type PptxViewerController,
   type PresentationSearchResult,
   type PresentationSource,
   type ViewerMode,
+  usePptxViewer,
+  usePptxViewerThumbnails,
 } from '@extend-ai/react-pptx';
 import { Icon } from './icons';
 
@@ -17,9 +19,34 @@ const SAMPLE_SOURCE = '/viewer-smoke.pptx';
 const ZOOM_OPTIONS = [50, 75, 90, 100, 110, 125, 150, 175, 200] as const;
 const MIN_ZOOM = ZOOM_OPTIONS[0];
 const MAX_ZOOM = ZOOM_OPTIONS[ZOOM_OPTIONS.length - 1] ?? 200;
+const THUMBNAIL_ROW_ESTIMATE = 134;
+const THUMBNAIL_OVERSCAN = 3;
+const THUMBNAIL_PREFETCH = 3;
+
+function buildThumbnailRenderWindow(visibleIndexes: readonly number[], slideCount: number) {
+  const visibleSlideIndexes = [...new Set(visibleIndexes)]
+    .filter((index) => index >= 0 && index < slideCount)
+    .sort((left, right) => left - right);
+  if (!visibleSlideIndexes.length) {
+    return { visibleSlideIndexes, prefetchSlideIndexes: [] };
+  }
+
+  const visible = new Set(visibleSlideIndexes);
+  const prefetchSlideIndexes: number[] = [];
+  const first = visibleSlideIndexes[0] ?? 0;
+  const last = visibleSlideIndexes.at(-1) ?? first;
+  for (let distance = 1; distance <= THUMBNAIL_PREFETCH; distance += 1) {
+    for (const index of [first - distance, last + distance]) {
+      if (index >= 0 && index < slideCount && !visible.has(index)) {
+        prefetchSlideIndexes.push(index);
+      }
+    }
+  }
+  return { visibleSlideIndexes, prefetchSlideIndexes };
+}
 
 export function App() {
-  const viewerRef = useRef<PptxViewerController>(null);
+  const viewer = usePptxViewer();
   const inputRef = useRef<HTMLInputElement>(null);
   const [source, setSource] = useState<PresentationSource>(SAMPLE_SOURCE);
   const [fileName, setFileName] = useState('viewer-smoke.pptx');
@@ -31,10 +58,44 @@ export function App() {
   const [results, setResults] = useState<readonly PresentationSearchResult[]>([]);
   const [activeResult, setActiveResult] = useState<number | null>(null);
   const [diagnostics, setDiagnostics] = useState(false);
-  const [thumbnailsOpen, setThumbnailsOpen] = useState(false);
+  const [thumbnailsOpen, setThumbnailsOpen] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [parsed, setParsed] = useState<ParsedPresentation | null>(null);
   const [dark, setDark] = useState(false);
+  const thumbnailScrollRef = useRef<HTMLDivElement>(null);
+  const thumbnailVirtualizer = useVirtualizer({
+    count: slideCount,
+    enabled: thumbnailsOpen && slideCount > 0,
+    estimateSize: () => THUMBNAIL_ROW_ESTIMATE,
+    getScrollElement: () => thumbnailScrollRef.current,
+    initialRect: { height: 640, width: 204 },
+    overscan: THUMBNAIL_OVERSCAN,
+    useFlushSync: false,
+  });
+  const virtualThumbnails = thumbnailVirtualizer.getVirtualItems();
+  const virtualThumbnailIndexesKey = virtualThumbnails
+    .map((thumbnail) => thumbnail.index)
+    .join(',');
+  const thumbnailRenderWindow = useMemo(
+    () =>
+      buildThumbnailRenderWindow(
+        virtualThumbnailIndexesKey
+          ? virtualThumbnailIndexesKey.split(',').map((index) => Number(index))
+          : [],
+        slideCount,
+      ),
+    [slideCount, virtualThumbnailIndexesKey],
+  );
+  const { thumbnails } = usePptxViewerThumbnails(viewer.controller, {
+    disabled: !thumbnailsOpen,
+    renderWindow: thumbnailRenderWindow,
+    resolution: { maxWidth: 152, maxHeight: 114 },
+  });
+
+  useEffect(() => {
+    if (!thumbnailsOpen || slideCount === 0) return;
+    thumbnailVirtualizer.scrollToIndex(slide, { align: 'auto' });
+  }, [slide, slideCount, thumbnailVirtualizer, thumbnailsOpen]);
 
   const openFile = useCallback((file?: File) => {
     if (!file) return;
@@ -51,12 +112,12 @@ export function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)
         return;
-      if (event.key === 'ArrowRight' || event.key === 'PageDown') void viewerRef.current?.next();
-      if (event.key === 'ArrowLeft' || event.key === 'PageUp') void viewerRef.current?.previous();
+      if (event.key === 'ArrowRight' || event.key === 'PageDown') void viewer.controller?.next();
+      if (event.key === 'ArrowLeft' || event.key === 'PageUp') void viewer.controller?.previous();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [viewer.controller]);
 
   const stepResult = (direction: 1 | -1) => {
     if (!results.length) return;
@@ -134,7 +195,7 @@ export function App() {
                 type="button"
                 aria-label="Previous slide"
                 disabled={slide === 0}
-                onClick={() => void viewerRef.current?.previous()}
+                onClick={() => void viewer.controller?.previous()}
               >
                 <Icon name="arrow-left" />
               </button>
@@ -146,7 +207,7 @@ export function App() {
                 type="button"
                 aria-label="Next slide"
                 disabled={slide >= slideCount - 1}
-                onClick={() => void viewerRef.current?.next()}
+                onClick={() => void viewer.controller?.next()}
               >
                 <Icon name="arrow-right" />
               </button>
@@ -223,6 +284,8 @@ export function App() {
                 className="button outline"
                 type="button"
                 data-active={thumbnailsOpen || undefined}
+                aria-expanded={thumbnailsOpen}
+                aria-controls="playground-slide-thumbnails"
                 onClick={() => setThumbnailsOpen(!thumbnailsOpen)}
               >
                 <Icon name="slides" />
@@ -279,31 +342,93 @@ export function App() {
             openFile(event.dataTransfer.files[0]);
           }}
         >
-          <ReactPptxViewer
-            ref={viewerRef}
-            source={source}
-            mode={mode}
-            zoom={zoom}
-            slideIndex={slide}
-            showThumbnails={thumbnailsOpen}
-            showDiagnostics={diagnostics}
-            virtualization={{
-              enabled: true,
-              initialSlides: 3,
-              batchSize: 3,
-              overscanViewport: 1.5,
-            }}
-            searchQuery={search}
-            activeSearchResult={activeResult}
-            onLoad={(next) => {
-              setParsed(next);
-              setSlideCount(next.document.slides.length);
-            }}
-            onSlideChange={setSlide}
-            onSearchResults={setResults}
-            onError={(error) => console.error(error)}
-            height="100%"
-          />
+          <div className="viewer-content">
+            {thumbnailsOpen ? (
+              <nav
+                id="playground-slide-thumbnails"
+                className="slide-rail"
+                aria-label="Slide thumbnails"
+              >
+                <div className="slide-rail__header">
+                  <strong>Slides</strong>
+                  <span>{slideCount}</span>
+                </div>
+                <div ref={thumbnailScrollRef} className="slide-rail__list">
+                  {thumbnails.length ? (
+                    <div
+                      className="slide-rail__sizer"
+                      style={{ height: thumbnailVirtualizer.getTotalSize() }}
+                    >
+                      {virtualThumbnails.map((virtualThumbnail) => {
+                        const thumbnail = thumbnails[virtualThumbnail.index];
+                        if (!thumbnail) return null;
+                        return (
+                          <div
+                            key={virtualThumbnail.key}
+                            ref={thumbnailVirtualizer.measureElement}
+                            className="slide-rail__item"
+                            data-index={virtualThumbnail.index}
+                            style={{ transform: `translateY(${virtualThumbnail.start}px)` }}
+                          >
+                            <button
+                              className="slide-thumbnail"
+                              type="button"
+                              data-active={thumbnail.slideIndex === slide || undefined}
+                              data-status={thumbnail.status}
+                              aria-current={thumbnail.slideIndex === slide ? 'page' : undefined}
+                              aria-label={`Go to slide ${thumbnail.slideNumber}`}
+                              aria-posinset={thumbnail.slideNumber}
+                              aria-setsize={slideCount}
+                              onClick={() =>
+                                void viewer.controller?.goToSlide(thumbnail.slideIndex)
+                              }
+                            >
+                              <span className="slide-thumbnail__number">
+                                {thumbnail.slideNumber}
+                              </span>
+                              <span
+                                className="slide-thumbnail__preview"
+                                ref={thumbnail.containerRef}
+                                style={{ width: thumbnail.width, height: thumbnail.height }}
+                              />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="slide-rail__empty">Preparing previews…</div>
+                  )}
+                </div>
+              </nav>
+            ) : null}
+            <div className="viewer-host">
+              <ReactPptxViewer
+                ref={viewer.ref}
+                source={source}
+                mode={mode}
+                zoom={zoom}
+                slideIndex={slide}
+                showDiagnostics={diagnostics}
+                virtualization={{
+                  enabled: true,
+                  initialSlides: 3,
+                  batchSize: 3,
+                  overscanViewport: 1.5,
+                }}
+                searchQuery={search}
+                activeSearchResult={activeResult}
+                onLoad={(next) => {
+                  setParsed(next);
+                  setSlideCount(next.document.slides.length);
+                }}
+                onSlideChange={setSlide}
+                onSearchResults={setResults}
+                onError={(error) => console.error(error)}
+                height="100%"
+              />
+            </div>
+          </div>
           <div className="drop-overlay">
             <div>
               <Icon name="upload" />

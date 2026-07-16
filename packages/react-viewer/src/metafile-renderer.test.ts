@@ -1,4 +1,4 @@
-import { convertEmfToDataUrl } from 'emf-converter';
+import { renderEmfToDataUrl, renderWmfToDataUrl } from './metafile-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 interface TextDraw {
@@ -115,7 +115,54 @@ function mappingModeEmf(explicitViewport: boolean): ArrayBuffer {
   return bytes.buffer;
 }
 
-describe('patched emf-converter mapping mode', () => {
+function placeableWmf(): ArrayBuffer {
+  const setWindowOrigin = new Uint8Array(10);
+  const origin = new DataView(setWindowOrigin.buffer);
+  origin.setUint32(0, 5, true);
+  origin.setUint16(4, 0x020b, true);
+
+  const setWindowExtent = new Uint8Array(10);
+  const extent = new DataView(setWindowExtent.buffer);
+  extent.setUint32(0, 5, true);
+  extent.setUint16(4, 0x020c, true);
+  extent.setInt16(6, 100, true);
+  extent.setInt16(8, 100, true);
+
+  const textOut = new Uint8Array(14);
+  const text = new DataView(textOut.buffer);
+  text.setUint32(0, 7, true);
+  text.setUint16(4, 0x0521, true);
+  text.setUint16(6, 1, true);
+  text.setUint8(8, 'A'.charCodeAt(0));
+  text.setInt16(10, 50, true);
+  text.setInt16(12, 50, true);
+
+  const eof = new Uint8Array(6);
+  const eofView = new DataView(eof.buffer);
+  eofView.setUint32(0, 3, true);
+
+  const records = [setWindowOrigin, setWindowExtent, textOut, eof];
+  const byteLength = 40 + records.reduce((total, record) => total + record.byteLength, 0);
+  const bytes = new Uint8Array(byteLength);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, 0x9ac6cdd7, true);
+  view.setInt16(10, 100, true);
+  view.setInt16(12, 100, true);
+  view.setUint16(14, 1_440, true);
+  view.setUint16(22, 1, true);
+  view.setUint16(24, 9, true);
+  view.setUint16(26, 0x0300, true);
+  view.setUint32(28, (byteLength - 22) / 2, true);
+  view.setUint16(32, 8, true);
+  let offset = 40;
+  for (const record of records) {
+    bytes.set(record, offset);
+    offset += record.byteLength;
+  }
+  return bytes.buffer;
+}
+
+describe('metafile renderer mapping mode', () => {
   afterEach(() => {
     canvases.length = 0;
     vi.unstubAllGlobals();
@@ -127,7 +174,7 @@ describe('patched emf-converter mapping mode', () => {
   ])('scales text and coordinates at 2x DPI with %s', async (_label, explicitViewport) => {
     vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
 
-    const url = await convertEmfToDataUrl(mappingModeEmf(explicitViewport), undefined, undefined, {
+    const url = await renderEmfToDataUrl(mappingModeEmf(explicitViewport), undefined, undefined, {
       dpiScale: 2,
     });
 
@@ -137,5 +184,26 @@ describe('patched emf-converter mapping mode', () => {
     expect(canvases[0]?.context.textDraws).toEqual([
       { text: 'A', x: 100, y: 100, font: '20px "Liberation Sans"' },
     ]);
+  });
+
+  it('renders a placeable WMF through the same bounded canvas path', async () => {
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+
+    const url = await renderWmfToDataUrl(placeableWmf(), undefined, undefined, { dpiScale: 2 });
+
+    expect(url).toMatch(/^data:image\/png;base64,/);
+    expect(canvases).toHaveLength(1);
+    expect([canvases[0]?.width, canvases[0]?.height]).toEqual([200, 200]);
+    expect(canvases[0]?.context.textDraws).toEqual([
+      { text: 'A', x: 100, y: 100, font: '24px sans-serif' },
+    ]);
+  });
+
+  it('rejects malformed metafiles without allocating a canvas', async () => {
+    vi.stubGlobal('OffscreenCanvas', FakeOffscreenCanvas);
+
+    await expect(renderEmfToDataUrl(new ArrayBuffer(16))).resolves.toBeNull();
+    await expect(renderWmfToDataUrl(new ArrayBuffer(8))).resolves.toBeNull();
+    expect(canvases).toHaveLength(0);
   });
 });

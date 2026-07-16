@@ -7,11 +7,6 @@ settings:
 overrides:
   esbuild: 0.28.1
 
-patchedDependencies:
-  emf-converter@1.5.0:
-    hash: 2gd6foimxbeko2ddvmzitdi47a
-    path: patches/emf-converter@1.5.0.patch
-
 importers:
 
   .:
@@ -67,6 +62,9 @@ importers:
       '@fontsource-variable/inter':
         specifier: ^5.2.8
         version: 5.2.8
+      '@tanstack/react-virtual':
+        specifier: ^3.13.12
+        version: 3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react:
         specifier: ^19.1.0
         version: 19.2.7
@@ -104,6 +102,9 @@ importers:
 
   packages/react-viewer:
     dependencies:
+      '@tanstack/react-virtual':
+        specifier: ^3.13.12
+        version: 3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@tanstack/virtual-core':
         specifier: ^3.13.12
         version: 3.17.4
@@ -150,9 +151,6 @@ importers:
       '@types/topojson-client':
         specifier: ^3.1.5
         version: 3.1.5
-      emf-converter:
-        specifier: 1.5.0
-        version: 1.5.0(patch_hash=2gd6foimxbeko2ddvmzitdi47a)
       react:
         specifier: ^19.1.0
         version: 19.2.7
@@ -721,6 +719,12 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@tanstack/react-virtual@3.14.6':
+    resolution: {integrity: sha512-4+Uq8m0/gzO4kMCHUEpTtGX1RnONK0C+g88b2ltwPMWUBiaVarBuWKoPJaz7gj1cKCVRAdyu+U8GcKhwCc2beA==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
   '@tanstack/virtual-core@3.17.4':
     resolution: {integrity: sha512-nGm5KteqxasUdThLc2izl6dHUqLv0LQj7Nuyo5gYalTPf/U8a9ermvsl7reT+6ioBW1l8WfpP/mcU338nLXpqw==}
 
@@ -987,9 +991,6 @@ packages:
   dir-glob@3.0.1:
     resolution: {integrity: sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA==}
     engines: {node: '>=8'}
-
-  emf-converter@1.5.0:
-    resolution: {integrity: sha512-qEZmhI8G3uZgfbpBLV8UmFKOWosdpcAUNOEltsa1Ci+fq6w6DeoENsNOdcMEmmeIfPV+18IjVagqNzInJzI5KA==}
 
   enquirer@2.4.1:
     resolution: {integrity: sha512-rRqJg/6gd538VHvR3PSrdRBb/1Vy2YfzHqzvbhGIQpDRKIa4FgV/54b5Q1xYSxOOwKvjXweS26E0Q+nAMwp2pQ==}
@@ -2281,6 +2282,12 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@tanstack/react-virtual@3.14.6(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@tanstack/virtual-core': 3.17.4
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+
   '@tanstack/virtual-core@3.17.4': {}
 
   '@tybys/wasm-util@0.10.3':
@@ -2516,8 +2523,6 @@ snapshots:
   dir-glob@3.0.1:
     dependencies:
       path-type: 4.0.0
-
-  emf-converter@1.5.0(patch_hash=2gd6foimxbeko2ddvmzitdi47a): {}
 
   enquirer@2.4.1:
     dependencies:

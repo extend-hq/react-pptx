@@ -14,6 +14,7 @@
   "dependencies": {
     "@extend-ai/react-pptx": "workspace:*",
     "@fontsource-variable/inter": "^5.2.8",
+    "@tanstack/react-virtual": "^3.13.12",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

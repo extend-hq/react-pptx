@@ -8,6 +8,7 @@ import type {
   PresentationTheme,
   SlideNode,
   TextParagraph,
+  TextRun,
 } from '@extend-ai/react-pptx-model';
 import { renderChartInto } from './charts/chart-host';
 import type {
@@ -17,8 +18,8 @@ import type {
   VirtualizationOptions,
 } from './types';
 import { Virtualizer } from '@tanstack/virtual-core';
-import { convertEmfToDataUrl, convertWmfToDataUrl } from 'emf-converter';
 import { OFFICE_FONT_FALLBACKS } from './fonts';
+import { renderEmfToDataUrl, renderWmfToDataUrl } from './metafile-renderer';
 
 const EMU_PER_CSS_PIXEL = 9_525;
 const DEFAULT_TEXT_HORIZONTAL_INSET_EMU = 91_440;
@@ -197,6 +198,164 @@ function bulletCharacter(paragraph: TextParagraph, counters: Map<number, number>
   return /[\uE000-\uF8FF]/u.test(value) ? '•' : value;
 }
 
+function isEastAsianLanguage(language: string): boolean {
+  return /^(?:ja|ko|zh)(?:-|$)/i.test(language);
+}
+
+function isComplexScriptLanguage(language: string): boolean {
+  return /^(?:ar|dv|fa|he|ku|ps|syr|ug|ur|yi)(?:-|$)/i.test(language);
+}
+
+function runFontFamily(run: TextRun): string | undefined {
+  const language = run.language ?? run.alternativeLanguage ?? '';
+  const symbolFirst = /^[\u2000-\u206f\u2190-\u2bff\ue000-\uf8ff\s]+$/u.test(run.text);
+  const ordered = symbolFirst
+    ? [run.symbolFontFamily, run.fontFamily, run.eastAsianFontFamily, run.complexScriptFontFamily]
+    : isEastAsianLanguage(language)
+      ? [run.eastAsianFontFamily, run.fontFamily, run.complexScriptFontFamily, run.symbolFontFamily]
+      : isComplexScriptLanguage(language) || run.rightToLeft
+        ? [
+            run.complexScriptFontFamily,
+            run.fontFamily,
+            run.eastAsianFontFamily,
+            run.symbolFontFamily,
+          ]
+        : [
+            run.fontFamily,
+            run.eastAsianFontFamily,
+            run.complexScriptFontFamily,
+            run.symbolFontFamily,
+          ];
+  const families = ordered.filter(
+    (family, index): family is string => Boolean(family) && ordered.indexOf(family) === index,
+  );
+  return families.length > 0 ? families.join(', ') : undefined;
+}
+
+function createTextRunElement(
+  run: TextRun,
+  paragraph: TextParagraph,
+  fontScale: number,
+): HTMLElement {
+  const href = safeHyperlink(run.hyperlink);
+  const span = document.createElement(href ? 'a' : 'span');
+  span.textContent = run.text;
+  const fontFamily = runFontFamily(run);
+  if (fontFamily) span.style.fontFamily = fontFamily;
+  if (run.fontSizePt !== undefined) span.style.fontSize = `${run.fontSizePt * fontScale}pt`;
+  if (run.characterSpacingPt !== undefined)
+    span.style.letterSpacing = `${run.characterSpacingPt}pt`;
+  if (run.kerningThresholdPt !== undefined) {
+    const effectiveFontSize = run.fontSizePt === undefined ? undefined : run.fontSizePt * fontScale;
+    span.style.fontKerning =
+      effectiveFontSize === undefined || effectiveFontSize >= run.kerningThresholdPt
+        ? 'normal'
+        : 'none';
+  }
+  if (run.bold) span.style.fontWeight = '700';
+  if (run.italic) span.style.fontStyle = 'italic';
+  const decorations = [run.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(
+    Boolean,
+  );
+  if (decorations.length) span.style.textDecoration = decorations.join(' ');
+  if (run.color) span.style.color = color(run.color) ?? '';
+  if (run.baseline) {
+    span.style.verticalAlign = run.baseline > 0 ? 'super' : 'sub';
+    span.style.fontSize = span.style.fontSize || '0.75em';
+  }
+  const language = run.language ?? run.alternativeLanguage;
+  if (language) span.lang = language;
+  if (run.rightToLeft !== undefined) {
+    span.dir = run.rightToLeft ? 'rtl' : 'ltr';
+    span.style.unicodeBidi = 'embed';
+  }
+  if (paragraph.latinLineBreak && !isEastAsianLanguage(language ?? '')) {
+    span.style.overflowWrap = 'anywhere';
+  }
+  if (paragraph.eastAsianLineBreak === false && isEastAsianLanguage(language ?? '')) {
+    span.style.wordBreak = 'keep-all';
+  }
+  if (href && span instanceof HTMLAnchorElement) {
+    span.href = href;
+    span.target = '_blank';
+    span.rel = 'noreferrer noopener';
+  }
+  return span;
+}
+
+function splitRunsIntoTabRows(runs: TextRun[]): TextRun[][][] {
+  const rows: TextRun[][][] = [[[]]];
+  for (const run of runs) {
+    for (const token of run.text.split(/([\t\n])/u)) {
+      if (!token) continue;
+      if (token === '\t') {
+        rows.at(-1)!.push([]);
+      } else if (token === '\n') {
+        rows.push([[]]);
+      } else {
+        rows
+          .at(-1)!
+          .at(-1)!
+          .push({ ...run, text: token });
+      }
+    }
+  }
+  return rows;
+}
+
+function appendExplicitTabLayout(
+  line: HTMLElement,
+  paragraph: TextParagraph,
+  fontScale: number,
+): boolean {
+  const stops = [...(paragraph.tabStops ?? [])]
+    .filter((stop) => Number.isFinite(stop.positionEmu) && stop.positionEmu >= 0)
+    .sort((first, second) => first.positionEmu - second.positionEmu);
+  if (stops.length === 0 || !paragraph.runs.some((run) => run.text.includes('\t'))) return false;
+
+  const widths: number[] = [];
+  let previous = 0;
+  for (const stop of stops) {
+    widths.push(Math.max(0, (stop.positionEmu - previous) / EMU_PER_CSS_PIXEL));
+    previous = stop.positionEmu;
+  }
+  const template = `${widths.map((width) => `${width}px`).join(' ')} minmax(0, 1fr)`;
+  for (const cells of splitRunsIntoTabRows(paragraph.runs)) {
+    const row = document.createElement('span');
+    row.dataset.rpvTabRow = '';
+    row.style.display = 'grid';
+    row.style.position = 'relative';
+    row.style.gridTemplateColumns = template;
+    row.style.minWidth = '0';
+    row.style.minHeight = '1em';
+    cells.forEach((runs, cellIndex) => {
+      const cell = document.createElement('span');
+      cell.dataset.rpvTabCell = String(cellIndex);
+      cell.style.minWidth = '0';
+      if (cellIndex === 0) {
+        cell.style.gridColumn = '1';
+      } else {
+        const stopIndex = Math.min(cellIndex - 1, stops.length - 1);
+        const stop = stops[stopIndex]!;
+        if (stop.alignment === 'left') {
+          cell.style.gridColumn = String(Math.min(stopIndex + 2, stops.length + 1));
+        } else if (stop.alignment === 'center') {
+          cell.style.position = 'absolute';
+          cell.style.left = `${stop.positionEmu / EMU_PER_CSS_PIXEL}px`;
+          cell.style.transform = 'translateX(-50%)';
+        } else {
+          cell.style.gridColumn = String(Math.max(1, stopIndex + 1));
+          cell.style.justifySelf = 'end';
+        }
+      }
+      for (const run of runs) cell.append(createTextRunElement(run, paragraph, fontScale));
+      row.append(cell);
+    });
+    line.append(row);
+  }
+  return true;
+}
+
 function applyText(
   container: HTMLElement,
   paragraphs: TextParagraph[],
@@ -207,7 +366,7 @@ function applyText(
   const counters = new Map<number, number>();
   const wraps = !/^(?:none|nowrap)$/i.test(options.textWrap ?? 'square');
   container.style.whiteSpace = wraps ? 'pre-wrap' : 'pre';
-  container.style.overflowWrap = wraps ? 'break-word' : 'normal';
+  container.style.overflowWrap = 'normal';
   for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
     const line = document.createElement('div');
     line.dataset.rpvTextParagraph = '';
@@ -216,8 +375,24 @@ function applyText(
     line.style.lineHeight = String(POWERPOINT_SINGLE_LINE_HEIGHT * (1 - lineSpacingReduction));
     line.style.textAlign =
       paragraph.alignment === 'distributed' ? 'justify' : (paragraph.alignment ?? 'left');
-    if (paragraph.alignment === 'distributed') line.style.textAlignLast = 'justify';
+    if (paragraph.alignment === 'distributed') {
+      line.style.textAlignLast = 'justify';
+      line.style.setProperty('text-justify', 'inter-character');
+    } else if (paragraph.alignment === 'justify') {
+      line.style.setProperty('text-justify', 'inter-word');
+    }
     line.style.direction = paragraph.rtl ? 'rtl' : 'ltr';
+    line.style.overflowWrap = wraps && paragraph.latinLineBreak ? 'anywhere' : 'normal';
+    if (paragraph.eastAsianLineBreak !== undefined) {
+      line.style.wordBreak = paragraph.eastAsianLineBreak ? 'normal' : 'keep-all';
+      line.style.setProperty('line-break', paragraph.eastAsianLineBreak ? 'strict' : 'auto');
+    }
+    if (paragraph.hangingPunctuation) {
+      line.style.setProperty('hanging-punctuation', 'first allow-end last');
+    }
+    if (paragraph.defaultTabSizeEmu !== undefined) {
+      line.style.tabSize = `${paragraph.defaultTabSizeEmu / EMU_PER_CSS_PIXEL}px`;
+    }
     line.style.marginLeft =
       paragraph.marginLeftEmu !== undefined
         ? `${paragraph.marginLeftEmu / EMU_PER_CSS_PIXEL}px`
@@ -246,6 +421,10 @@ function applyText(
       const marker = document.createElement('span');
       marker.dataset.rpvBullet = '';
       marker.textContent = `${bulletCharacter(paragraph, counters)}\u00a0`;
+      if (!paragraph.rtl && paragraph.indentEmu !== undefined && paragraph.indentEmu < 0) {
+        marker.style.display = 'inline-block';
+        marker.style.width = `${-paragraph.indentEmu / EMU_PER_CSS_PIXEL}px`;
+      }
       if (paragraph.bullet.fontFamily) marker.style.fontFamily = paragraph.bullet.fontFamily;
       if (paragraph.bullet.fontSizePt !== undefined) {
         marker.style.fontSize = `${paragraph.bullet.fontSizePt * fontScale}pt`;
@@ -261,34 +440,11 @@ function applyText(
       marker.setAttribute('aria-hidden', 'true');
       line.append(marker);
     }
-    for (const run of paragraph.runs) {
-      const href = safeHyperlink(run.hyperlink);
-      const span = document.createElement(href ? 'a' : 'span');
-      span.textContent = run.text;
-      if (run.fontFamily) span.style.fontFamily = run.fontFamily;
-      if (run.fontSizePt !== undefined) span.style.fontSize = `${run.fontSizePt * fontScale}pt`;
-      if (run.characterSpacingPt !== undefined) {
-        span.style.letterSpacing = `${run.characterSpacingPt}pt`;
-      }
-      if (run.bold) span.style.fontWeight = '700';
-      if (run.italic) span.style.fontStyle = 'italic';
-      const decorations = [
-        run.underline ? 'underline' : '',
-        run.strike ? 'line-through' : '',
-      ].filter(Boolean);
-      if (decorations.length) span.style.textDecoration = decorations.join(' ');
-      if (run.color) span.style.color = color(run.color) ?? '';
-      if (run.baseline) {
-        span.style.verticalAlign = run.baseline > 0 ? 'super' : 'sub';
-        span.style.fontSize = span.style.fontSize || '0.75em';
-      }
-      if (run.language) span.lang = run.language;
-      if (href && span instanceof HTMLAnchorElement) {
-        span.href = href;
-        span.target = '_blank';
-        span.rel = 'noreferrer noopener';
-      }
-      line.append(span);
+    const usedExplicitTabs =
+      !paragraph.bullet && appendExplicitTabLayout(line, paragraph, fontScale);
+    if (!usedExplicitTabs) {
+      for (const run of paragraph.runs)
+        line.append(createTextRunElement(run, paragraph, fontScale));
     }
     container.append(line);
   }
@@ -300,6 +456,16 @@ function applyLine(element: HTMLElement, line?: LineStyle): void {
   const lineColor = color(line.color) ?? 'currentColor';
   const style = /dash|dot/i.test(line.dash ?? '') ? 'dashed' : 'solid';
   element.style.border = `${width}px ${style} ${lineColor}`;
+}
+
+function normalizedPresetGeometryPath(preset?: string): string | undefined {
+  switch (preset) {
+    case 'heart':
+      // ECMA-376 preset geometry, normalized from w/h coordinates to 0..1.
+      return 'M 0.5 0.25 C 0.7083333333 -0.3333333333 1.5208333333 0.25 0.5 1 C -0.5208333333 0.25 0.2916666667 -0.3333333333 0.5 0.25 Z';
+    default:
+      return undefined;
+  }
 }
 
 function applyGeometry(element: HTMLElement, preset?: string): void {
@@ -471,6 +637,42 @@ function createDuotoneFilter(
   return svg;
 }
 
+/**
+ * Builds a deterministic sRGB threshold filter for DrawingML `a:biLevel`.
+ * A discrete 256-entry transfer avoids the browser-dependent rounding of a
+ * very large CSS contrast filter around the threshold boundary.
+ */
+function createBiLevelFilter(id: string, threshold: number): SVGSVGElement {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(namespace, 'svg');
+  svg.setAttribute('width', '0');
+  svg.setAttribute('height', '0');
+  svg.style.position = 'absolute';
+  svg.setAttribute('aria-hidden', 'true');
+  const filter = document.createElementNS(namespace, 'filter');
+  filter.id = id;
+  filter.setAttribute('color-interpolation-filters', 'sRGB');
+  const luminance = document.createElementNS(namespace, 'feColorMatrix');
+  luminance.setAttribute('type', 'matrix');
+  luminance.setAttribute(
+    'values',
+    '0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0',
+  );
+  const transfer = document.createElementNS(namespace, 'feComponentTransfer');
+  const tableValues = Array.from({ length: 256 }, (_, index) =>
+    index / 255 < threshold ? '0' : '1',
+  ).join(' ');
+  for (const name of ['feFuncR', 'feFuncG', 'feFuncB'] as const) {
+    const func = document.createElementNS(namespace, name);
+    func.setAttribute('type', 'discrete');
+    func.setAttribute('tableValues', tableValues);
+    transfer.append(func);
+  }
+  filter.append(luminance, transfer);
+  svg.append(filter);
+  return svg;
+}
+
 function searchDocument(
   presentation: PresentationDocument,
   query: string | RegExp,
@@ -613,7 +815,7 @@ export class NormalizedPresentationViewer {
   ): Promise<string | undefined> {
     const cached = this.metafileUrls.get(assetId);
     if (cached) return cached;
-    const convert = contentType.includes('wmf') ? convertWmfToDataUrl : convertEmfToDataUrl;
+    const convert = contentType.includes('wmf') ? renderWmfToDataUrl : renderEmfToDataUrl;
     const ownedBytes = data.slice();
     const pending = convert(ownedBytes.buffer as ArrayBuffer, 2_048, 2_048, {
       dpiScale: 2,
@@ -679,10 +881,10 @@ export class NormalizedPresentationViewer {
       }
     }
     if (effects.biLevelThreshold !== undefined) {
-      // Shift the luminance so the threshold lands on the CSS contrast pivot
-      // (0.5), then a huge contrast snaps every pixel to black or white.
       const threshold = Math.min(0.98, Math.max(0.02, effects.biLevelThreshold));
-      filters.push('grayscale(1)', `brightness(${0.5 / threshold})`, 'contrast(9999)');
+      const id = `rpv-bilevel-${++this.customGeometrySequence}`;
+      filterHost.append(createBiLevelFilter(id, threshold));
+      filters.push(`url(#${id})`);
     } else if (effects.grayscale) {
       filters.push('grayscale(1)');
     }
@@ -742,6 +944,7 @@ export class NormalizedPresentationViewer {
 
   private createCustomGeometry(
     node: Extract<SlideNode, { type: 'shape' }>,
+    pathData = node.geometry.path ?? '',
   ): SVGSVGElement {
     const namespace = 'http://www.w3.org/2000/svg';
     const svg = document.createElementNS(namespace, 'svg');
@@ -756,7 +959,7 @@ export class NormalizedPresentationViewer {
     svg.style.pointerEvents = 'none';
 
     const path = document.createElementNS(namespace, 'path');
-    path.setAttribute('d', node.geometry.path ?? '');
+    path.setAttribute('d', pathData);
     path.setAttribute('vector-effect', 'non-scaling-stroke');
     path.style.fill = 'none';
 
@@ -989,8 +1192,9 @@ export class NormalizedPresentationViewer {
     }
 
     if (node.type === 'shape') {
-      if (node.geometry.path) {
-        element.append(this.createCustomGeometry(node));
+      const presetPath = normalizedPresetGeometryPath(node.geometry.preset);
+      if (node.geometry.path || presetPath) {
+        element.append(this.createCustomGeometry(node, node.geometry.path ?? presetPath));
       } else {
         this.applyFill(element, node.fill, node.id);
         applyGeometry(element, node.geometry.preset);
@@ -1035,6 +1239,8 @@ export class NormalizedPresentationViewer {
         textContent.style.minWidth = '0';
         textContent.style.maxHeight = '100%';
         if (node.columnCount && node.columnCount > 1) {
+          textContent.style.width = '100%';
+          textContent.style.height = '100%';
           textContent.style.columnCount = String(Math.floor(node.columnCount));
           textContent.style.columnFill = 'auto';
           if (node.columnSpacing !== undefined) {

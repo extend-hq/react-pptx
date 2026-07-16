@@ -504,6 +504,15 @@ describe('normalized viewer safety and fidelity', () => {
               line: { color: { value: '#000000' }, width: 2 },
               paragraphs: [],
             },
+            {
+              id: 'heart-preset',
+              type: 'shape',
+              transform: { ...transform, x: 3_000_000 },
+              geometry: { preset: 'heart' },
+              fill: { type: 'solid', color: { value: '#ff0000' } },
+              line: { color: { value: '#4472c4' }, width: 1 },
+              paragraphs: [],
+            },
           ],
         },
       ],
@@ -526,6 +535,13 @@ describe('normalized viewer safety and fidelity', () => {
     expect(path.getAttribute('d')).toBe('M 0 0 L 1 0.5 L 0 1 Z');
     expect(path.style.fill).toMatch(/#ff0000|rgb\(255, 0, 0\)/i);
     expect(path.style.strokeWidth).toBe('2px');
+    const heartPath = container.querySelector<SVGPathElement>(
+      '[data-rpv-node-id="heart-preset"] [data-rpv-custom-geometry] path',
+    )!;
+    expect(heartPath.getAttribute('d')).toBe(
+      'M 0.5 0.25 C 0.7083333333 -0.3333333333 1.5208333333 0.25 0.5 1 C -0.5208333333 0.25 0.2916666667 -0.3333333333 0.5 0.25 Z',
+    );
+    expect(heartPath.style.fill).toMatch(/#ff0000|rgb\(255, 0, 0\)/i);
     viewer.destroy();
   });
 
@@ -765,9 +781,17 @@ describe('normalized viewer safety and fidelity', () => {
     const biLevel = container.querySelector<HTMLImageElement>(
       '[data-rpv-node-id="bilevel-image"] img',
     )!;
-    expect(biLevel.style.filter).toContain('grayscale(1)');
-    expect(biLevel.style.filter).toContain('contrast(9999)');
-    expect(biLevel.style.filter).toMatch(/brightness\(0\.8333/);
+    expect(biLevel.style.filter).toMatch(/^url\("?#rpv-bilevel-\d+"?\)$/);
+    const biLevelFilterId = biLevel.style.filter.match(/#(rpv-bilevel-\d+)/)?.[1];
+    const biLevelFilter = container.querySelector(`#${biLevelFilterId}`)!;
+    expect(biLevelFilter.getAttribute('color-interpolation-filters')).toBe('sRGB');
+    const biLevelTable = biLevelFilter
+      .querySelector('feComponentTransfer feFuncR')
+      ?.getAttribute('tableValues')
+      ?.split(' ');
+    expect(biLevelTable).toHaveLength(256);
+    expect(biLevelTable?.[152]).toBe('0');
+    expect(biLevelTable?.[153]).toBe('1');
 
     const duotone = container.querySelector<HTMLImageElement>(
       '[data-rpv-node-id="duotone-image"] img',

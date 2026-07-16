@@ -84,6 +84,20 @@ const CLASSIC_BAR_XML = `<?xml version="1.0"?>
   </c:chart>
 </c:chartSpace>`;
 
+const SCATTER_WITH_BUILTIN_MARKERS_XML = `<?xml version="1.0"?>
+<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:c14="http://schemas.microsoft.com/office/drawing/2007/8/2/chart">
+  <mc:AlternateContent><mc:Choice Requires="c14"><c14:style val="118"/></mc:Choice><mc:Fallback><c:style val="18"/></mc:Fallback></mc:AlternateContent>
+  <c:chart><c:plotArea><c:scatterChart>
+    <c:scatterStyle val="lineMarker"/>
+    <c:ser>
+      <c:idx val="0"/><c:order val="0"/>
+      <c:spPr><a:ln><a:noFill/></a:ln></c:spPr>
+      <c:xVal><c:numRef><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>0.7</c:v></c:pt><c:pt idx="1"><c:v>1.8</c:v></c:pt><c:pt idx="2"><c:v>2.6</c:v></c:pt></c:numCache></c:numRef></c:xVal>
+      <c:yVal><c:numRef><c:numCache><c:ptCount val="3"/><c:pt idx="0"><c:v>2.7</c:v></c:pt><c:pt idx="1"><c:v>3.2</c:v></c:pt><c:pt idx="2"><c:v>0.8</c:v></c:pt></c:numCache></c:numRef></c:yVal>
+    </c:ser>
+  </c:scatterChart></c:plotArea></c:chart>
+</c:chartSpace>`;
+
 describe('buildPptxChart', () => {
   const palette = buildThemePaletteFromPresentationTheme(OFFICE_THEME);
 
@@ -124,6 +138,31 @@ describe('buildPptxChart', () => {
     expect(chart.textColor).toBe('#000000');
   });
 
+  it('resolves omitted scatter markers through the built-in chart style', () => {
+    const chart = buildPptxChart(chartNode(SCATTER_WITH_BUILTIN_MARKERS_XML), palette);
+
+    expect(chart.chartType).toBe('ScatterLines');
+    expect(chart.scatterStyle).toBe('lineMarker');
+    expect(chart.series[0]?.categories).toEqual([0.7, 1.8, 2.6]);
+    expect(chart.series[0]?.values).toEqual([2.7, 3.2, 0.8]);
+    expect(chart.series[0]?.shapeProperties?.xmlLineHidden).toBe(true);
+    expect(chart.series[0]?.markerSymbol).toBe('diamond');
+  });
+
+  it('preserves an explicit none scatter marker', () => {
+    const chart = buildPptxChart(
+      chartNode(
+        SCATTER_WITH_BUILTIN_MARKERS_XML.replace(
+          '<c:idx val="0"/><c:order val="0"/>',
+          '<c:idx val="0"/><c:order val="0"/><c:marker><c:symbol val="none"/></c:marker>',
+        ),
+      ),
+      palette,
+    );
+
+    expect(chart.series[0]?.markerSymbol).toBe('none');
+  });
+
   it('reads the Microsoft chart color style part for the series palette', () => {
     const colorsXml = `<?xml version="1.0"?>
 <cs:colorStyle xmlns:cs="http://schemas.microsoft.com/office/drawing/2012/chartStyle" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" meth="cycle" id="10">
@@ -131,7 +170,10 @@ describe('buildPptxChart', () => {
   <a:srgbClr val="112233"/>
   <cs:variation/>
 </cs:colorStyle>`;
-    const chart = buildPptxChart(chartNode(CLASSIC_BAR_XML, { chartColorsXml: colorsXml }), palette);
+    const chart = buildPptxChart(
+      chartNode(CLASSIC_BAR_XML, { chartColorsXml: colorsXml }),
+      palette,
+    );
     expect(chart.chartColorPalette).toEqual(['#70ad47', '#112233']);
     // The unstyled third series now cycles the chart color style palette.
     expect(chart.series[2]?.color).toBe('#70ad47');
@@ -198,7 +240,9 @@ describe('buildPptxChart', () => {
         chartType: 'pie',
         title: 'Legacy',
         hasLegend: true,
-        series: [{ name: 'S1', categories: ['A', 'B'], values: [1, 2], color: { value: '#336699' } }],
+        series: [
+          { name: 'S1', categories: ['A', 'B'], values: [1, 2], color: { value: '#336699' } },
+        ],
       },
       palette,
     );

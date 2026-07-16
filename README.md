@@ -87,7 +87,7 @@ diagnostics without a conversion step.
 
 ## License
 
-MIT. See [third-party notices](THIRD_PARTY_NOTICES.md) for the Apache-2.0 EMF/WMF converter.
+MIT. See [third-party notices](THIRD_PARTY_NOTICES.md) for bundled chart and atlas assets.
 
 Maintainers can find the versioning, npm Trusted Publishing, and automated GitHub
 release process in [the release guide](docs/releasing.md).
