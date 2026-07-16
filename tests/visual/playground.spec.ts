@@ -93,3 +93,34 @@ test('loads and renders a real-world legacy PPT file', async ({ page }) => {
   await expect(diagnostics).toContainText('degraded-rendering');
   expect(consoleErrors).toEqual([]);
 });
+
+test('scrolls the virtualized list smoothly without snapping back', async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') consoleErrors.push(message.text());
+  });
+  await page.goto('/');
+  await expect(page.getByText('PPTX · 2 slides')).toBeVisible();
+  const viewport = page.getByTestId('pptx-viewport');
+  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('1 / 2');
+  // Fixed absolute offsets inside a full-height sizer keep the scroll
+  // geometry stable while slides mount and unmount.
+  await expect(viewport.locator('[data-rpv-virtual-sizer]')).toHaveCount(1);
+
+  // Scroll to the bottom; the toolbar must follow the reading position.
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('2 / 2');
+
+  // The viewport must hold an arbitrary mid-scroll position: controlled
+  // hosts echo onSlideChange back into slideIndex, and that echo used to
+  // snap the scroll position to the slide boundary.
+  await viewport.evaluate((element) => {
+    element.scrollTop = 130;
+  });
+  await page.waitForTimeout(700);
+  const settled = await viewport.evaluate((element) => element.scrollTop);
+  expect(Math.round(settled)).toBe(130);
+  expect(consoleErrors).toEqual([]);
+});

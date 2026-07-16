@@ -1,18 +1,22 @@
 import type {
   FillStyle,
+  ImageEffects,
   LineStyle,
   PresentationAsset,
   PresentationDocument,
   PresentationSearchResult,
+  PresentationTheme,
   SlideNode,
   TextParagraph,
 } from '@extend-ai/react-pptx-model';
+import { renderChartInto } from './charts/chart-host';
 import type {
   FitMode,
   SearchHighlightOptions,
   ViewerSearchOptions,
   VirtualizationOptions,
 } from './types';
+import { Virtualizer } from '@tanstack/virtual-core';
 import { convertEmfToDataUrl, convertWmfToDataUrl } from 'emf-converter';
 import { OFFICE_FONT_FALLBACKS } from './fonts';
 
@@ -60,7 +64,18 @@ interface ActiveListState {
   generation: number;
   options: RenderListOptions;
   placeholders: ListPlaceholder[];
+  /** Deterministic offset navigation provided by the TanStack virtualizer. */
+  scrollToIndex?: (index: number, options?: ScrollIntoViewOptions) => void;
 }
+
+/** Vertical spacing between slides in continuous mode, in CSS pixels. */
+const LIST_ITEM_GAP = 24;
+
+/**
+ * Viewport rect used when layout measurements are unavailable (jsdom, SSR,
+ * display: none) so the virtualizer still mounts an initial window.
+ */
+const FALLBACK_VIEWPORT_RECT = { width: 800, height: 600 };
 
 const METAFILE_FONT_MAP = Object.fromEntries(
   Object.entries(OFFICE_FONT_FALLBACKS).map(([family, fallbacks]) => [
@@ -405,6 +420,57 @@ function isWordCharacter(value: string | undefined): boolean {
   return Boolean(value && /[\p{L}\p{N}_]/u.test(value));
 }
 
+function rgbChannels(value: string | undefined): [number, number, number] | undefined {
+  const hex = value?.trim().replace(/^#/, '');
+  if (!hex || hex.length !== 6 || !/^[\da-f]{6}$/i.test(hex)) return undefined;
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+/**
+ * Builds a hidden SVG carrying a DrawingML duotone filter: the picture is
+ * reduced to luminance, then mapped from the dark color to the light color.
+ */
+function createDuotoneFilter(
+  id: string,
+  dark: [number, number, number],
+  light: [number, number, number],
+): SVGSVGElement {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(namespace, 'svg');
+  svg.setAttribute('width', '0');
+  svg.setAttribute('height', '0');
+  svg.style.position = 'absolute';
+  svg.setAttribute('aria-hidden', 'true');
+  const filter = document.createElementNS(namespace, 'filter');
+  filter.id = id;
+  filter.setAttribute('color-interpolation-filters', 'sRGB');
+  const luminance = document.createElementNS(namespace, 'feColorMatrix');
+  luminance.setAttribute('type', 'matrix');
+  luminance.setAttribute(
+    'values',
+    '0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0.2126 0.7152 0.0722 0 0 0 0 0 1 0',
+  );
+  const transfer = document.createElementNS(namespace, 'feComponentTransfer');
+  const channels: Array<['feFuncR' | 'feFuncG' | 'feFuncB', 0 | 1 | 2]> = [
+    ['feFuncR', 0],
+    ['feFuncG', 1],
+    ['feFuncB', 2],
+  ];
+  for (const [name, channel] of channels) {
+    const func = document.createElementNS(namespace, name);
+    func.setAttribute('type', 'table');
+    func.setAttribute('tableValues', `${dark[channel] / 255} ${light[channel] / 255}`);
+    transfer.append(func);
+  }
+  filter.append(luminance, transfer);
+  svg.append(filter);
+  return svg;
+}
+
 function searchDocument(
   presentation: PresentationDocument,
   query: string | RegExp,
@@ -475,14 +541,13 @@ export class NormalizedPresentationViewer {
   private objectUrls = new Set<string>();
   private assetUrls = new Map<string, string>();
   private metafileUrls = new Map<string, Promise<string | undefined>>();
-  private visibleSlides = new Map<number, { ratio: number; top: number }>();
-  private observer: IntersectionObserver | undefined;
-  private visibilityObserver: IntersectionObserver | undefined;
+  private listCleanup: (() => void) | undefined;
   private highlight: HTMLElement | undefined;
   private pendingResources = new Set<Promise<void>>();
   private mountedHandles = new Set<DisposableHandle>();
   private handlesByTarget = new Map<HTMLElement, DisposableHandle>();
   private destroyed = false;
+  private renderingSlideIndex: number | undefined;
   private customGeometrySequence = 0;
   private renderGeneration = 0;
   private navigationGeneration = 0;
@@ -528,11 +593,8 @@ export class NormalizedPresentationViewer {
     if (this.destroyed) return undefined;
     const generation = ++this.renderGeneration;
     this.navigationGeneration += 1;
-    this.observer?.disconnect();
-    this.visibilityObserver?.disconnect();
-    this.observer = undefined;
-    this.visibilityObserver = undefined;
-    this.visibleSlides.clear();
+    this.listCleanup?.();
+    this.listCleanup = undefined;
     this.listState = undefined;
     this.clearSearchHighlights();
     return generation;
@@ -595,11 +657,49 @@ export class NormalizedPresentationViewer {
     this.pendingResources.add(pending);
   }
 
+  /**
+   * Applies DrawingML picture recolor effects (`a:biLevel`, `a:grayscl`,
+   * `a:duotone`, `a:lum`) to the element that paints the picture, matching
+   * PowerPoint's rendering as closely as CSS/SVG filters allow.
+   */
+  private applyImageEffects(
+    target: HTMLElement | SVGElement,
+    effects: ImageEffects | undefined,
+    filterHost: HTMLElement,
+  ): void {
+    if (!effects) return;
+    const filters: string[] = [];
+    if (effects.duotone && effects.duotone.length >= 2) {
+      const dark = rgbChannels(effects.duotone[0]?.value);
+      const light = rgbChannels(effects.duotone[1]?.value);
+      if (dark && light) {
+        const id = `rpv-duotone-${++this.customGeometrySequence}`;
+        filterHost.append(createDuotoneFilter(id, dark, light));
+        filters.push(`url(#${id})`);
+      }
+    }
+    if (effects.biLevelThreshold !== undefined) {
+      // Shift the luminance so the threshold lands on the CSS contrast pivot
+      // (0.5), then a huge contrast snaps every pixel to black or white.
+      const threshold = Math.min(0.98, Math.max(0.02, effects.biLevelThreshold));
+      filters.push('grayscale(1)', `brightness(${0.5 / threshold})`, 'contrast(9999)');
+    } else if (effects.grayscale) {
+      filters.push('grayscale(1)');
+    }
+    if (effects.brightness) {
+      filters.push(`brightness(${1 + Math.max(-1, Math.min(1, effects.brightness))})`);
+    }
+    if (effects.contrast) {
+      filters.push(`contrast(${1 + Math.max(-1, Math.min(1, effects.contrast))})`);
+    }
+    if (filters.length > 0) target.style.filter = filters.join(' ');
+  }
+
   private applyFill(element: HTMLElement, fillStyle: FillStyle | undefined, nodeId: string): void {
     if (fillStyle?.type === 'image') {
       const opacity = Math.max(0, Math.min(1, fillStyle.opacity ?? 1));
       const target =
-        opacity < 1
+        opacity < 1 || fillStyle.effects
           ? (() => {
               const layer = document.createElement('div');
               layer.dataset.rpvImageFill = '';
@@ -627,6 +727,7 @@ export class NormalizedPresentationViewer {
       } else {
         target.style.backgroundSize = '100% 100%';
       }
+      this.applyImageEffects(target, fillStyle.effects, element);
       this.applyAsset(
         fillStyle.assetId,
         (url) => {
@@ -732,7 +833,28 @@ export class NormalizedPresentationViewer {
     return svg;
   }
 
+  private themeForSlide(index: number | undefined): PresentationTheme | undefined {
+    const slide = index === undefined ? undefined : this.presentation.slides[index];
+    const master = this.presentation.masters.find((entry) => entry.id === slide?.masterId);
+    return (
+      this.presentation.themes.find((entry) => entry.id === master?.themeId) ??
+      this.presentation.themes[0]
+    );
+  }
+
   private createChart(node: Extract<SlideNode, { type: 'chart' }>): HTMLElement {
+    const container = document.createElement('div');
+    container.style.width = '100%';
+    container.style.height = '100%';
+    container.setAttribute('role', 'img');
+    container.setAttribute('aria-label', node.title ?? `${node.chartType} chart`);
+    if (renderChartInto(container, node, this.themeForSlide(this.renderingSlideIndex))) {
+      return container;
+    }
+    return this.createChartFallback(node);
+  }
+
+  private createChartFallback(node: Extract<SlideNode, { type: 'chart' }>): HTMLElement {
     const chart = document.createElement('div');
     chart.style.width = '100%';
     chart.style.height = '100%';
@@ -945,6 +1067,7 @@ export class NormalizedPresentationViewer {
       image.style.objectFit = node.preserveAspectRatio === false ? 'fill' : 'contain';
       element.style.overflow = 'hidden';
       if (node.crop) applyCroppedImage(image, node.crop);
+      this.applyImageEffects(image, node.effects, element);
       element.append(image);
     } else if (node.type === 'group') {
       const childCoordinate = node.childTransform ?? {
@@ -1024,7 +1147,6 @@ export class NormalizedPresentationViewer {
       });
       element.append(table);
     } else if (node.type === 'chart') {
-      element.style.border = '1px solid color-mix(in srgb, currentColor 25%, transparent)';
       element.append(this.createChart(node));
     } else if (node.type === 'media') {
       const media = document.createElement(node.mediaType === 'audio' ? 'audio' : 'video');
@@ -1054,6 +1176,7 @@ export class NormalizedPresentationViewer {
   private createSlide(index: number): HTMLElement {
     const slide = this.presentation.slides[index];
     if (!slide) throw new RangeError(`Slide ${index} does not exist.`);
+    this.renderingSlideIndex = index;
     const element = document.createElement('section');
     element.className = 'rpv-normalized-slide';
     element.dataset.rpvSlideIndex = String(index);
@@ -1085,6 +1208,7 @@ export class NormalizedPresentationViewer {
         this.callbacks.onNodeError?.(node.id, error);
       }
     }
+    this.renderingSlideIndex = undefined;
     return element;
   }
 
@@ -1190,6 +1314,45 @@ export class NormalizedPresentationViewer {
     this.notifySlideChange(this.current);
   }
 
+  private createListPlaceholder(
+    index: number,
+    item: HTMLElement,
+    generation: number,
+    scale?: number,
+  ): ListPlaceholder {
+    let handle: DisposableHandle | undefined;
+    let mountPromise: Promise<void> | undefined;
+    const isActive = () =>
+      this.isRenderActive(generation) && this.listState?.generation === generation;
+    const mount = (): Promise<void> => {
+      if (!isActive()) return Promise.resolve();
+      if (handle) return handle.ready;
+      if (mountPromise) return mountPromise;
+      const nextHandle = this.mount(index, item, scale);
+      handle = nextHandle;
+      const pending = nextHandle.ready
+        .then(() => {
+          if (!isActive() || handle !== nextHandle) {
+            if (handle === nextHandle) handle = undefined;
+            nextHandle.dispose();
+          }
+        })
+        .finally(() => {
+          if (mountPromise === pending) mountPromise = undefined;
+        });
+      mountPromise = pending;
+      return pending;
+    };
+    const unmount = (): void => {
+      const mounted = handle;
+      handle = undefined;
+      if (mounted) {
+        mounted.dispose();
+      }
+    };
+    return { item, mount, unmount, isMounted: () => Boolean(handle) };
+  }
+
   async renderList(options: RenderListOptions = {}): Promise<void> {
     const windowingEnabled = options.enabled !== false;
     const normalizedOptions = { ...options, enabled: windowingEnabled };
@@ -1212,130 +1375,218 @@ export class NormalizedPresentationViewer {
       0,
       Math.min(this.slideCount - 1, options.initialSlideIndex ?? this.current),
     );
-    const requestedInitial = options.initialSlides ?? 2;
-    const initial =
-      Number.isFinite(requestedInitial) && requestedInitial >= 0 ? Math.floor(requestedInitial) : 2;
-    const requestedOverscan = options.overscanViewport ?? 1.5;
-    const overscan =
-      Number.isFinite(requestedOverscan) && requestedOverscan >= 0 ? requestedOverscan : 1.5;
-    const viewportWidth = (options.scrollElement ?? this.container).clientWidth;
+    const scroller = options.scrollElement ?? this.container;
+    const viewportWidth = scroller.clientWidth;
     const estimatedFitScale =
       this.fit === 'contain'
         ? Math.min(1, (viewportWidth || this.naturalSlideWidth) / this.naturalSlideWidth)
         : 1;
-    const placeholders = this.presentation.slides.map((slide, index) => {
+    const effectiveScale = estimatedFitScale * (this.zoom / 100);
+    const slideHeight = this.naturalSlideHeight * effectiveScale;
+    const itemStride = slideHeight + LIST_ITEM_GAP;
+
+    if (!windowingEnabled) {
+      // Non-windowed continuous mode: every slide mounts in normal flow.
+      const placeholders = this.presentation.slides.map((_, index) => {
+        const item = document.createElement('div');
+        item.dataset.rpvListItem = String(index);
+        item.style.minHeight = `${slideHeight}px`;
+        item.style.margin = `0 auto ${LIST_ITEM_GAP}px`;
+        this.container.append(item);
+        return this.createListPlaceholder(index, item, generation);
+      });
+      const state: ActiveListState = { generation, options: normalizedOptions, placeholders };
+      this.listState = state;
+      await this.mountInBatches(
+        placeholders,
+        this.presentation.slides.map((_, index) => index),
+        options.batchSize ?? 3,
+        generation,
+      );
+      if (!this.isRenderActive(generation) || this.listState !== state) return;
+      if (!options.scrollElement) {
+        this.container.scrollTop = 0;
+        this.container.scrollLeft = 0;
+      }
+      const initialItem = placeholders[initialIndex]?.item;
+      if (initialItem && initialIndex !== 0) {
+        initialItem.scrollIntoView?.({ behavior: 'instant', block: 'start' });
+      }
+      this.current = initialIndex;
+      this.notifySlideChange(initialIndex);
+      return;
+    }
+
+    // Windowed continuous mode driven by TanStack Virtual: slides live at
+    // fixed absolute offsets inside a full-height sizer, so mounting and
+    // unmounting content never shifts layout and scrolling stays smooth.
+    const sizer = document.createElement('div');
+    sizer.dataset.rpvVirtualSizer = '';
+    sizer.style.position = 'relative';
+    sizer.style.width = '100%';
+    sizer.style.height = `${this.slideCount * itemStride - LIST_ITEM_GAP}px`;
+    this.container.append(sizer);
+
+    const placeholders = this.presentation.slides.map((_, index) => {
       const item = document.createElement('div');
       item.dataset.rpvListItem = String(index);
-      item.style.minHeight = `${this.naturalSlideHeight * estimatedFitScale * (this.zoom / 100)}px`;
-      item.style.margin = '0 auto 24px';
-      let handle: DisposableHandle | undefined;
-      let mountPromise: Promise<void> | undefined;
-      const isActive = () =>
-        this.isRenderActive(generation) && this.listState?.generation === generation;
-      const mount = (): Promise<void> => {
-        if (!isActive()) return Promise.resolve();
-        if (handle) return handle.ready;
-        if (mountPromise) return mountPromise;
-        const nextHandle = this.mount(index, item);
-        handle = nextHandle;
-        const pending = nextHandle.ready
-          .then(() => {
-            if (!isActive() || handle !== nextHandle) {
-              if (handle === nextHandle) handle = undefined;
-              nextHandle.dispose();
-            }
-          })
-          .finally(() => {
-            if (mountPromise === pending) mountPromise = undefined;
-          });
-        mountPromise = pending;
-        return pending;
-      };
-      const unmount = (): void => {
-        const mounted = handle;
-        handle = undefined;
-        if (mounted) {
-          mounted.dispose();
-        }
-      };
-      this.container.append(item);
-      return { item, mount, unmount, isMounted: () => Boolean(handle) };
+      item.style.position = 'absolute';
+      item.style.top = '0';
+      item.style.left = '0';
+      item.style.width = '100%';
+      item.style.height = `${slideHeight}px`;
+      item.style.transform = `translateY(${index * itemStride}px)`;
+      sizer.append(item);
+      // Mount with the exact scale the shell geometry was computed from so
+      // content and window heights always agree, even if the container is
+      // still settling its layout.
+      return this.createListPlaceholder(index, item, generation, effectiveScale);
     });
 
-    const state: ActiveListState = {
-      generation,
-      options: normalizedOptions,
-      placeholders,
-    };
+    const state: ActiveListState = { generation, options: normalizedOptions, placeholders };
     this.listState = state;
-    const hasObserver = typeof IntersectionObserver !== 'undefined';
-    const initialIndices =
-      windowingEnabled && hasObserver
-        ? [...Array(Math.min(initial, this.slideCount)).keys(), initialIndex]
-        : this.presentation.slides.map((_, index) => index);
-    await this.mountInBatches(placeholders, initialIndices, options.batchSize ?? 3, generation);
-    if (!this.isRenderActive(generation) || this.listState !== state) return;
+    const isActive = () => this.isRenderActive(generation) && this.listState === state;
 
-    if (!options.scrollElement) {
+    const measureViewportRect = () => {
+      const rect = scroller.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
+      if (scroller.clientHeight > 0) {
+        return { width: scroller.clientWidth, height: scroller.clientHeight };
+      }
+      return { ...FALLBACK_VIEWPORT_RECT };
+    };
+    const initialRect = measureViewportRect();
+    const requestedOverscan = options.overscanViewport ?? 1.5;
+    const overscanViewports =
+      Number.isFinite(requestedOverscan) && requestedOverscan >= 0 ? requestedOverscan : 1.5;
+    const overscan = Math.max(1, Math.ceil((overscanViewports * initialRect.height) / itemStride));
+    // Content rendered above the slide list (inside the same scroller) offsets
+    // every virtual position; re-measured whenever the layout settles.
+    const measureScrollMargin = () =>
+      sizer.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+    let scrollMargin = measureScrollMargin();
+    // When the container is still collapsed while the document loads, the
+    // initial alignment lands wrong; repeat it once real layout arrives as
+    // long as the user has not scrolled yet.
+    let needsSettleAlignment = initialIndex > 0;
+    let lastProgrammaticTop: number | undefined;
+
+    const reconcile = (instance: Virtualizer<HTMLElement, HTMLElement>): void => {
+      if (!isActive()) return;
+      const windowed = new Set(instance.getVirtualItems().map((item) => item.index));
+      placeholders.forEach((placeholder, index) => {
+        if (windowed.has(index)) void placeholder.mount();
+        else placeholder.unmount();
+      });
+      // Report the slide with the largest visible overlap, matching how
+      // PowerPoint's own thumbnail rail tracks the reading position.
+      const offset = (instance.scrollOffset ?? 0) - scrollMargin;
+      const viewportHeight = instance.scrollRect?.height ?? initialRect.height;
+      const firstCandidate = Math.max(0, Math.floor(offset / itemStride));
+      const lastCandidate = Math.min(
+        this.slideCount - 1,
+        Math.max(firstCandidate, Math.floor((offset + viewportHeight) / itemStride)),
+      );
+      let best = firstCandidate;
+      let bestOverlap = Number.NEGATIVE_INFINITY;
+      for (let index = firstCandidate; index <= lastCandidate; index += 1) {
+        const start = index * itemStride;
+        const overlap =
+          Math.min(offset + viewportHeight, start + slideHeight) - Math.max(offset, start);
+        if (overlap > bestOverlap + 0.5) {
+          bestOverlap = overlap;
+          best = index;
+        }
+      }
+      if (best !== this.current) {
+        this.current = best;
+        this.notifySlideChange(best);
+      }
+    };
+
+    const virtualizer = new Virtualizer<HTMLElement, HTMLElement>({
+      count: this.slideCount,
+      getScrollElement: () => scroller,
+      estimateSize: () => slideHeight,
+      gap: LIST_ITEM_GAP,
+      overscan,
+      scrollMargin,
+      initialRect,
+      initialOffset: initialIndex > 0 ? scrollMargin + initialIndex * itemStride : 0,
+      observeElementRect: (instance, callback) => {
+        const publish = () => {
+          callback(measureViewportRect());
+          const nextMargin = measureScrollMargin();
+          if (Math.abs(nextMargin - scrollMargin) > 1) {
+            scrollMargin = nextMargin;
+            instance.setOptions({ ...instance.options, scrollMargin: nextMargin });
+            instance.measure();
+          }
+          if (needsSettleAlignment && scroller.clientHeight > 0) {
+            needsSettleAlignment = false;
+            const undisturbed =
+              scroller.scrollTop === 0 ||
+              (lastProgrammaticTop !== undefined &&
+                Math.abs(scroller.scrollTop - lastProgrammaticTop) <= 2);
+            if (undisturbed) state.scrollToIndex?.(initialIndex);
+          }
+        };
+        publish();
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(publish);
+        observer.observe(scroller);
+        return () => observer.disconnect();
+      },
+      observeElementOffset: (_instance, callback) => {
+        const onScroll = () => callback(scroller.scrollTop, true);
+        callback(scroller.scrollTop, false);
+        scroller.addEventListener('scroll', onScroll, { passive: true });
+        return () => scroller.removeEventListener('scroll', onScroll);
+      },
+      scrollToFn: (offset, { adjustments, behavior }) => {
+        const top = offset + (adjustments ?? 0);
+        lastProgrammaticTop = top;
+        if (typeof scroller.scrollTo === 'function') {
+          scroller.scrollTo(behavior ? { top, behavior } : { top });
+        } else {
+          scroller.scrollTop = top;
+        }
+      },
+      onChange: (instance) => reconcile(instance),
+    });
+    state.scrollToIndex = (index, scrollOptions) => {
+      if (!isActive()) return;
+      virtualizer.scrollToIndex(index, {
+        align:
+          scrollOptions?.block === 'center'
+            ? 'center'
+            : scrollOptions?.block === 'end'
+              ? 'end'
+              : scrollOptions?.block === 'nearest'
+                ? 'auto'
+                : 'start',
+        behavior: scrollOptions?.behavior === 'smooth' ? 'smooth' : 'auto',
+      });
+    };
+    const teardown = virtualizer._didMount();
+    this.listCleanup = teardown;
+    virtualizer._willUpdate();
+
+    const initialWindow = virtualizer.getVirtualItems().map((item) => item.index);
+    await this.mountInBatches(
+      placeholders,
+      [...initialWindow, initialIndex],
+      options.batchSize ?? 3,
+      generation,
+    );
+    if (!isActive()) return;
+    if (initialIndex > 0) state.scrollToIndex(initialIndex);
+    else if (!options.scrollElement) {
       this.container.scrollTop = 0;
       this.container.scrollLeft = 0;
     }
-    const initialItem = placeholders[initialIndex]?.item;
-    if (initialItem && initialIndex !== 0) {
-      initialItem.scrollIntoView?.({ behavior: 'instant', block: 'start' });
-    }
     this.current = initialIndex;
     this.notifySlideChange(initialIndex);
-    if (windowingEnabled && hasObserver) {
-      const observerRoot = options.scrollElement ?? this.container;
-      this.observer = new IntersectionObserver(
-        (entries) => {
-          if (!this.isRenderActive(generation) || this.listState !== state) return;
-          for (const entry of entries) {
-            const index = Number((entry.target as HTMLElement).dataset.rpvListItem);
-            if (entry.isIntersecting) void placeholders[index]?.mount();
-            else placeholders[index]?.unmount();
-          }
-        },
-        {
-          root: observerRoot,
-          rootMargin: `${overscan * 100}% 0px`,
-        },
-      );
-      this.visibilityObserver = new IntersectionObserver(
-        (entries) => {
-          if (!this.isRenderActive(generation) || this.listState !== state) return;
-          for (const entry of entries) {
-            const index = Number((entry.target as HTMLElement).dataset.rpvListItem);
-            if (entry.isIntersecting) {
-              void placeholders[index]?.mount();
-              this.visibleSlides.set(index, {
-                ratio: entry.intersectionRatio,
-                top: entry.boundingClientRect.top,
-              });
-            } else this.visibleSlides.delete(index);
-          }
-          const visible = [...this.visibleSlides.entries()].sort(
-            ([firstIndex, first], [secondIndex, second]) =>
-              second.ratio - first.ratio ||
-              Math.abs(first.top) - Math.abs(second.top) ||
-              firstIndex - secondIndex,
-          )[0];
-          if (visible && visible[0] !== this.current) {
-            this.current = visible[0];
-            this.notifySlideChange(this.current);
-          }
-        },
-        {
-          root: observerRoot,
-          threshold: [0, 0.01, 0.25, 0.5, 0.75, 1],
-        },
-      );
-      for (const { item } of placeholders) {
-        this.observer.observe(item);
-        this.visibilityObserver.observe(item);
-      }
-    }
   }
 
   async goToSlide(index: number, scrollOptions?: ScrollIntoViewOptions): Promise<void> {
@@ -1355,7 +1606,13 @@ export class NormalizedPresentationViewer {
       ) {
         return;
       }
-      placeholder?.item.scrollIntoView?.(scrollOptions);
+      // Only move the viewport when navigation actually changes the slide;
+      // controlled hosts echo the visible slide back through goToSlide while
+      // the user scrolls, and re-scrolling to it would snap the viewport.
+      if (changed) {
+        if (state.scrollToIndex) state.scrollToIndex(next, scrollOptions);
+        else placeholder?.item.scrollIntoView?.(scrollOptions);
+      }
       this.current = next;
       if (changed) this.notifySlideChange(next);
       return;
@@ -1465,11 +1722,8 @@ export class NormalizedPresentationViewer {
     this.destroyed = true;
     this.renderGeneration += 1;
     this.navigationGeneration += 1;
-    this.observer?.disconnect();
-    this.visibilityObserver?.disconnect();
-    this.observer = undefined;
-    this.visibilityObserver = undefined;
-    this.visibleSlides.clear();
+    this.listCleanup?.();
+    this.listCleanup = undefined;
     this.listState = undefined;
     this.clearSearchHighlights();
     for (const url of this.objectUrls) URL.revokeObjectURL(url);

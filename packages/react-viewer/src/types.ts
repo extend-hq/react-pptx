@@ -28,9 +28,16 @@ export interface ParsePresentationOptions {
 }
 
 export interface VirtualizationOptions {
-  /** Mount only slides near the viewport in continuous mode. Default `true`. */
+  /**
+   * Mount only slides near the viewport in continuous mode, windowed with
+   * TanStack Virtual at fixed offsets so scrolling never shifts layout.
+   * Default `true`.
+   */
   enabled?: boolean;
-  /** Slides mounted before observers begin driving the render window. Default `2`. */
+  /**
+   * @deprecated The virtualized window is viewport-driven; this option is
+   * ignored and kept only for API compatibility.
+   */
   initialSlides?: number;
   /** Overscan measured in viewport heights. Default `1.5`. */
   overscanViewport?: number;

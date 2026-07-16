@@ -59,6 +59,20 @@ export interface ColorValue {
   alpha?: number;
 }
 
+/** DrawingML picture recolor effects declared on an `a:blip`. */
+export interface ImageEffects {
+  /** `a:biLevel` black/white threshold, normalized to 0..1. */
+  biLevelThreshold?: number;
+  /** `a:grayscl` grayscale recolor. */
+  grayscale?: boolean;
+  /** `a:duotone` two-color ramp, dark then light. */
+  duotone?: [ColorValue, ColorValue] | ColorValue[];
+  /** `a:lum` brightness, normalized to -1..1. */
+  brightness?: number;
+  /** `a:lum` contrast, normalized to -1..1. */
+  contrast?: number;
+}
+
 export type FillStyle =
   | { type: 'none' }
   | { type: 'solid'; color: ColorValue }
@@ -75,6 +89,7 @@ export type FillStyle =
       crop?: { top: number; right: number; bottom: number; left: number };
       /** Opacity applied to the image fill only, normalized to 0..1. */
       opacity?: number;
+      effects?: ImageEffects;
     };
 
 export interface LineStyle {
@@ -174,6 +189,7 @@ export interface ImageNode extends BaseSlideNode {
   assetId: string;
   crop?: { top: number; right: number; bottom: number; left: number };
   preserveAspectRatio?: boolean;
+  effects?: ImageEffects;
 }
 
 export interface GroupNode extends BaseSlideNode {
@@ -213,6 +229,16 @@ export interface ChartNode extends BaseSlideNode {
   title?: string;
   series: ChartSeries[];
   hasLegend?: boolean;
+  /**
+   * Raw DrawingML chart part XML (`c:chartSpace` or `cx:chartSpace`).
+   * Viewers use this for full-fidelity chart rendering; the parsed summary
+   * fields above remain available for search and fallbacks.
+   */
+  chartXml?: string;
+  /** Companion Microsoft chart style part (`style*.xml`), when present. */
+  chartStyleXml?: string;
+  /** Companion Microsoft chart color style part (`colors*.xml`), when present. */
+  chartColorsXml?: string;
 }
 
 export interface MediaNode extends BaseSlideNode {

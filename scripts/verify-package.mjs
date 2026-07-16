@@ -51,14 +51,39 @@ try {
     }
   }
 
+  // The chart stack ships as ordinary runtime dependencies; only this exact
+  // set is allowed so stray packages cannot creep into the manifest.
+  const allowedRuntimeDependencies = new Set([
+    '@tanstack/virtual-core',
+    'd3-geo',
+    'd3-hierarchy',
+    'd3-scale',
+    'd3-shape',
+    'regl',
+    'topojson-client',
+  ]);
   const runtimeDependencies = new Set([
     ...Object.keys(manifest.dependencies ?? {}),
     ...Object.keys(manifest.optionalDependencies ?? {}),
   ]);
-  if (runtimeDependencies.size > 0) {
+  const unexpectedDependencies = [...runtimeDependencies].filter(
+    (name) => !allowedRuntimeDependencies.has(name),
+  );
+  if (unexpectedDependencies.length > 0) {
     throw new Error(
-      `Packed package unexpectedly requires runtime packages: ${[...runtimeDependencies].join(', ')}`,
+      `Packed package unexpectedly requires runtime packages: ${unexpectedDependencies.join(', ')}`,
     );
+  }
+  const missingDependencies = [...allowedRuntimeDependencies].filter(
+    (name) => !runtimeDependencies.has(name),
+  );
+  if (missingDependencies.length > 0) {
+    throw new Error(`Packed package is missing runtime dependencies: ${missingDependencies.join(', ')}`);
+  }
+  for (const atlasPackage of ['us-atlas', 'world-atlas']) {
+    if (runtimeDependencies.has(atlasPackage)) {
+      throw new Error(`${atlasPackage} must stay bundled in the lazy atlas chunk, not a dependency`);
+    }
   }
 
   const expectedPeers = new Set(['react', 'react-dom']);
@@ -87,6 +112,24 @@ try {
     if (!existsSync(join(packedDirectory, file))) {
       throw new Error(`Packed package is missing ${file}`);
     }
+  }
+
+  // The multi-megabyte TopoJSON atlases must live in a code-split chunk that
+  // only loads when a presentation contains an Excel map chart.
+  const distFiles = readdirSync(join(packedDirectory, 'dist')).filter((file) =>
+    file.endsWith('.js'),
+  );
+  const atlasMarker = '"Topology"';
+  const atlasChunks = distFiles.filter(
+    (file) =>
+      file !== 'index.js' &&
+      readFileSync(join(packedDirectory, 'dist', file), 'utf8').includes(atlasMarker),
+  );
+  if (atlasChunks.length === 0) {
+    throw new Error('Packed package is missing the lazily loaded region-map atlas chunk');
+  }
+  if (readFileSync(join(packedDirectory, 'dist', 'index.js'), 'utf8').includes(atlasMarker)) {
+    throw new Error('Region-map atlas data leaked into the eagerly loaded entry bundle');
   }
 
   const distributableSource = readdirSync(join(packedDirectory, 'dist'))
@@ -118,12 +161,17 @@ try {
     specifier.startsWith('@')
       ? specifier.split('/').slice(0, 2).join('/')
       : specifier.split('/')[0];
+  // Module specifiers never contain whitespace, quotes, or parentheses; this
+  // keeps bundled runtime strings such as regl's error messages
+  // (`" called from " + callSite`) from tripping the scanner.
+  const specifierPattern = /^[@a-zA-Z0-9][\w.+-]*(?:\/[\w.+-]+)*$/;
   const undeclaredImports = [
     ...new Set(
       importedSpecifiers
         .filter(
           (specifier) =>
             specifier &&
+            specifierPattern.test(specifier) &&
             !specifier.startsWith('.') &&
             !specifier.startsWith('/') &&
             !specifier.startsWith('node:') &&

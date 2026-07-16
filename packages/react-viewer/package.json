@@ -35,14 +35,22 @@
     "react-dom": ">=18.2 <20"
   },
   "devDependencies": {
+    "@types/d3-geo": "^3.1.0",
+    "@types/d3-hierarchy": "^3.1.7",
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-shape": "^3.1.8",
+    "@types/geojson": "^7946.0.16",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
+    "@types/topojson-client": "^3.1.5",
+    "emf-converter": "1.5.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "emf-converter": "1.5.0",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "vitest": "^4.1.10"
+    "us-atlas": "^3.0.1",
+    "vitest": "^4.1.10",
+    "world-atlas": "^2.0.2"
   },
   "publishConfig": {
     "access": "public"
@@ -56,5 +64,14 @@
     "url": "https://github.com/extend-hq/react-pptx/issues"
   },
   "homepage": "https://github.com/extend-hq/react-pptx#readme",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@tanstack/virtual-core": "^3.13.12",
+    "d3-geo": "^3.1.1",
+    "d3-hierarchy": "^3.1.2",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
+    "regl": "^2.1.1",
+    "topojson-client": "^3.1.0"
+  }
 }

@@ -139,3 +139,124 @@ const playgroundPublic = path.join(root, 'apps', 'playground', 'public');
 await mkdir(playgroundPublic, { recursive: true });
 await copyFile(fixturePath, path.join(playgroundPublic, 'viewer-smoke.pptx'));
 console.log(fixturePath);
+
+// Chart showcase: one deck covering the chart types the viewer renders with
+// react-xlsx parity, for manual QA in the playground.
+const charts = new PptxGenJS();
+charts.defineLayout({ name: 'WIDE', width: 13.33, height: 7.5 });
+charts.layout = 'WIDE';
+
+const chartLabels = ['Q1', 'Q2', 'Q3', 'Q4'];
+const north = { name: 'North', labels: chartLabels, values: [120, 180, 90, 210] };
+const south = { name: 'South', labels: chartLabels, values: [80, 140, 160, 60] };
+const west = { name: 'West', labels: chartLabels, values: [45, 95, 130, 175] };
+
+const columnsSlide = charts.addSlide();
+columnsSlide.addText('Column + Bar', { x: 0.4, y: 0.1, fontSize: 18, bold: true });
+columnsSlide.addChart(charts.ChartType.bar, [north, south, west], {
+  x: 0.4,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  barDir: 'col',
+  showLegend: true,
+  legendPos: 'b',
+  showTitle: true,
+  title: 'Revenue by Quarter',
+});
+columnsSlide.addChart(charts.ChartType.bar, [north, south], {
+  x: 6.8,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  barDir: 'bar',
+  showLegend: true,
+  legendPos: 'r',
+  chartColors: ['C0504D', '4F81BD'],
+  showValue: true,
+});
+
+const stackedSlide = charts.addSlide();
+stackedSlide.addText('Stacked + 100% stacked', { x: 0.4, y: 0.1, fontSize: 18, bold: true });
+stackedSlide.addChart(charts.ChartType.bar, [north, south, west], {
+  x: 0.4,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  barDir: 'col',
+  barGrouping: 'stacked',
+  showLegend: true,
+  legendPos: 'b',
+});
+stackedSlide.addChart(charts.ChartType.bar, [north, south, west], {
+  x: 6.8,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  barDir: 'col',
+  barGrouping: 'percentStacked',
+  showLegend: true,
+  legendPos: 'b',
+});
+
+const pieSlide = charts.addSlide();
+pieSlide.addText('Pie + Doughnut', { x: 0.4, y: 0.1, fontSize: 18, bold: true });
+pieSlide.addChart(
+  charts.ChartType.pie,
+  [{ name: 'Share', labels: ['Alpha', 'Beta', 'Gamma', 'Delta'], values: [35, 25, 25, 15] }],
+  { x: 0.4, y: 0.7, w: 6.1, h: 4.6, showLegend: true, legendPos: 'r', showPercent: true },
+);
+pieSlide.addChart(
+  charts.ChartType.doughnut,
+  [{ name: 'Share', labels: ['Alpha', 'Beta', 'Gamma', 'Delta'], values: [40, 30, 20, 10] }],
+  { x: 6.8, y: 0.7, w: 6.1, h: 4.6, holeSize: 55, showLegend: true, legendPos: 'r' },
+);
+
+const lineSlide = charts.addSlide();
+lineSlide.addText('Line + Area', { x: 0.4, y: 0.1, fontSize: 18, bold: true });
+lineSlide.addChart(charts.ChartType.line, [north, south, west], {
+  x: 0.4,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  lineSmooth: true,
+  lineSize: 2.5,
+  lineDataSymbol: 'circle',
+  lineDataSymbolSize: 7,
+  showLegend: true,
+  legendPos: 'b',
+});
+lineSlide.addChart(charts.ChartType.area, [north, south], {
+  x: 6.8,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  showLegend: true,
+  legendPos: 'b',
+});
+
+const scatterSlide = charts.addSlide();
+scatterSlide.addText('Scatter + Radar', { x: 0.4, y: 0.1, fontSize: 18, bold: true });
+scatterSlide.addChart(
+  charts.ChartType.scatter,
+  [
+    { name: 'X-Axis', values: [1, 2, 3, 4, 5, 6] },
+    { name: 'Trial A', values: [3, 5, 4, 6, 8, 7] },
+    { name: 'Trial B', values: [2, 4, 6, 5, 7, 9] },
+  ],
+  { x: 0.4, y: 0.7, w: 6.1, h: 4.4, showLegend: true, legendPos: 'b', lineSize: 0, lineDataSymbolSize: 8 },
+);
+scatterSlide.addChart(charts.ChartType.radar, [north, south], {
+  x: 6.8,
+  y: 0.7,
+  w: 6.1,
+  h: 4.4,
+  radarStyle: 'marker',
+  showLegend: true,
+  legendPos: 'b',
+});
+
+const chartsFixturePath = path.join(outputDirectory, 'charts-showcase.pptx');
+await charts.writeFile({ fileName: chartsFixturePath });
+await copyFile(chartsFixturePath, path.join(playgroundPublic, 'charts-showcase.pptx'));
+console.log(chartsFixturePath);

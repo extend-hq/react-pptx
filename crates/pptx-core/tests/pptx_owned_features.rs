@@ -77,7 +77,7 @@ fn feature_pptx() -> Vec<u8> {
 
               <p:pic>
                 <p:nvPicPr><p:cNvPr id="3" name="Picture"/></p:nvPicPr>
-                <p:blipFill><a:blip r:embed="rIdImage"/><a:stretch/></p:blipFill>
+                <p:blipFill><a:blip r:embed="rIdImage"><a:biLevel thresh="60000"/></a:blip><a:stretch/></p:blipFill>
                 <p:spPr><a:xfrm flipV="true"><a:off x="5000" y="6000"/><a:ext cx="7000" cy="8000"/></a:xfrm></p:spPr>
               </p:pic>
 
@@ -142,6 +142,24 @@ fn feature_pptx() -> Vec<u8> {
             <c:legend/>
           </c:chart>
         </c:chartSpace>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/charts/_rels/chart1.xml.rels",
+        br#"<Relationships>
+          <Relationship Id="rId1" Type="http://schemas.microsoft.com/office/2011/relationships/chartStyle" Target="style1.xml"/>
+          <Relationship Id="rId2" Type="http://schemas.microsoft.com/office/2011/relationships/chartColorStyle" Target="colors1.xml"/>
+        </Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/charts/style1.xml",
+        br#"<cs:chartStyle xmlns:cs="cs"/>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/charts/colors1.xml",
+        br#"<cs:colorStyle xmlns:cs="cs"/>"#,
     );
     add_file(
         &mut zip,
@@ -232,6 +250,7 @@ fn parses_owned_presentationml_rendering_features() {
     let SlideNode::Image {
         transform,
         asset_id,
+        effects,
         ..
     } = &slide.nodes[1]
     else {
@@ -240,6 +259,10 @@ fn parses_owned_presentationml_rendering_features() {
     assert_eq!(transform.flip_vertical, Some(true));
     assert_eq!(asset_id, "ppt/media/image1.png");
     assert_eq!(document.assets[asset_id].content_type, "image/png");
+    assert_eq!(
+        effects.as_ref().and_then(|value| value.bi_level_threshold),
+        Some(0.6)
+    );
 
     let SlideNode::Group {
         transform,
@@ -281,12 +304,23 @@ fn parses_owned_presentationml_rendering_features() {
         title,
         series,
         has_legend,
+        chart_xml,
+        chart_style_xml,
+        chart_colors_xml,
         ..
     } = &slide.nodes[4]
     else {
         panic!("expected chart")
     };
     assert_eq!(chart_type, "bar");
+    assert!(
+        chart_xml
+            .as_deref()
+            .is_some_and(|xml| xml.contains("<c:barChart>")),
+        "raw chart XML should be preserved for high-fidelity rendering"
+    );
+    assert!(chart_style_xml.as_deref().is_some_and(|xml| xml.contains("chartStyle")));
+    assert!(chart_colors_xml.as_deref().is_some_and(|xml| xml.contains("colorStyle")));
     assert_eq!(title.as_deref(), Some("Performance"));
     assert_eq!(*has_legend, Some(true));
     assert_eq!(series.len(), 2);
@@ -300,6 +334,80 @@ fn parses_owned_presentationml_rendering_features() {
         ]
     );
     assert_eq!(series[0].color.as_ref().unwrap().value, "#D8663A");
+}
+
+#[test]
+fn resolves_chartex_frames_wrapped_in_alternate_content() {
+    let mut output = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(&mut output);
+    add_file(
+        &mut zip,
+        "ppt/presentation.xml",
+        br#"<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/></p:presentation>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/_rels/presentation.xml.rels",
+        br#"<Relationships><Relationship Id="rId1" Target="slides/slide1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/_rels/slide1.xml.rels",
+        br#"<Relationships><Relationship Id="rIdChartEx" Target="../charts/chartEx1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/slide1.xml",
+        br#"<p:sld xmlns:p="p" xmlns:a="a" xmlns:r="r" xmlns:mc="mc" xmlns:cx="cx">
+          <p:cSld><p:spTree>
+            <p:nvGrpSpPr><p:cNvPr id="1" name=""/></p:nvGrpSpPr>
+            <p:grpSpPr/>
+            <mc:AlternateContent>
+              <mc:Choice Requires="cx1">
+                <p:graphicFrame>
+                  <p:nvGraphicFramePr><p:cNvPr id="2" name="Funnel"/></p:nvGraphicFramePr>
+                  <p:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="3000000"/></p:xfrm>
+                  <a:graphic><a:graphicData uri="chartex"><cx:chart r:id="rIdChartEx"/></a:graphicData></a:graphic>
+                </p:graphicFrame>
+              </mc:Choice>
+              <mc:Fallback>
+                <p:sp><p:nvSpPr><p:cNvPr id="3" name="Fallback"/></p:nvSpPr><p:spPr/></p:sp>
+              </mc:Fallback>
+            </mc:AlternateContent>
+          </p:spTree></p:cSld>
+        </p:sld>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/charts/chartEx1.xml",
+        br#"<cx:chartSpace xmlns:cx="cx" xmlns:a="a">
+          <cx:chartData><cx:data id="0">
+            <cx:strDim type="cat"><cx:lvl ptCount="2"><cx:pt idx="0">A</cx:pt><cx:pt idx="1">B</cx:pt></cx:lvl></cx:strDim>
+            <cx:numDim type="val"><cx:lvl ptCount="2"><cx:pt idx="0">4</cx:pt><cx:pt idx="1">2</cx:pt></cx:lvl></cx:numDim>
+          </cx:data></cx:chartData>
+          <cx:chart><cx:plotArea><cx:plotAreaRegion>
+            <cx:series layoutId="funnel"><cx:dataId val="0"/></cx:series>
+          </cx:plotAreaRegion></cx:plotArea></cx:chart>
+        </cx:chartSpace>"#,
+    );
+    zip.finish().unwrap();
+    let bytes = output.into_inner();
+
+    let document = pptx_core::parse_presentation(&bytes, &ParseLimits::default()).unwrap();
+    let slide = &document.slides[0];
+    assert_eq!(slide.nodes.len(), 1, "the Choice branch should win");
+    let SlideNode::Chart {
+        chart_type,
+        chart_xml,
+        ..
+    } = &slide.nodes[0]
+    else {
+        panic!("expected chartEx chart node, got {:?}", slide.nodes[0])
+    };
+    assert_eq!(chart_type, "chartEx");
+    assert!(chart_xml
+        .as_deref()
+        .is_some_and(|xml| xml.contains("funnel")));
 }
 
 fn slide_only_pptx(slide_xml: &str) -> Vec<u8> {

@@ -295,6 +295,8 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     const latestSlideRef = useRef(slide);
     const latestZoomRef = useRef(zoom);
     const latestFitModeRef = useRef(fitMode);
+    /** Last slide index the viewer itself reported through onSlideChange. */
+    const lastViewerSlideRef = useRef<number | undefined>(undefined);
     latestSlideRef.current = slide;
     latestZoomRef.current = zoom;
     latestFitModeRef.current = fitMode;
@@ -411,6 +413,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
             () => latestPropsRef.current,
             (index) => {
               if (!isCurrent()) return;
+              lastViewerSlideRef.current = index;
               setInternalSlide(index);
               latestPropsRef.current.onSlideChange?.(index);
             },
@@ -483,7 +486,10 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     ]);
 
     useEffect(() => {
-      if (adapterState && controlledSlide !== undefined) {
+      // Skip echoes: controlled hosts feed onSlideChange back into slideIndex
+      // while the user scrolls, and navigating to the already-visible slide
+      // would snap the scroll position.
+      if (adapterState && controlledSlide !== undefined && slide !== lastViewerSlideRef.current) {
         void adapterState.adapter.goToSlide(slide, { behavior: 'instant' });
       }
     }, [adapterState, controlledSlide, slide]);

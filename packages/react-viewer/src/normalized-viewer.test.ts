@@ -45,26 +45,6 @@ function presentationWithSlides(count: number, nodes: ShapeNode[] = []): Present
   };
 }
 
-function installObserverStub(): IntersectionObserverCallback[] {
-  const callbacks: IntersectionObserverCallback[] = [];
-  class ObserverStub {
-    constructor(callback: IntersectionObserverCallback) {
-      callbacks.push(callback);
-    }
-    observe() {}
-    disconnect() {}
-    unobserve() {}
-    takeRecords(): IntersectionObserverEntry[] {
-      return [];
-    }
-    readonly root = null;
-    readonly rootMargin = '';
-    readonly thresholds = [];
-  }
-  vi.stubGlobal('IntersectionObserver', ObserverStub);
-  return callbacks;
-}
-
 describe('normalized viewer scrolling', () => {
   afterEach(() => {
     document.body.replaceChildren();
@@ -72,55 +52,34 @@ describe('normalized viewer scrolling', () => {
     vi.unstubAllGlobals();
   });
 
-  it('uses a host-owned custom scroll element as the observer root', async () => {
-    const observedRoots: Array<Element | Document | null> = [];
-    class ObserverStub {
-      constructor(_callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        observedRoots.push(options?.root ?? null);
-      }
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-      takeRecords(): IntersectionObserverEntry[] {
-        return [];
-      }
-      readonly root = null;
-      readonly rootMargin = '';
-      readonly thresholds = [];
-    }
-    vi.stubGlobal('IntersectionObserver', ObserverStub);
+  it('drives virtualization from a host-owned custom scroll element', async () => {
     const hostScrollArea = document.createElement('div');
     const container = document.createElement('div');
     document.body.append(hostScrollArea, container);
+    const hostListeners: string[] = [];
+    const containerListeners: string[] = [];
+    const hostAddEventListener = hostScrollArea.addEventListener.bind(hostScrollArea);
+    hostScrollArea.addEventListener = ((type: string, ...rest: [never, never?]) => {
+      hostListeners.push(type);
+      return hostAddEventListener(type, ...rest);
+    }) as typeof hostScrollArea.addEventListener;
+    const containerAddEventListener = container.addEventListener.bind(container);
+    container.addEventListener = ((type: string, ...rest: [never, never?]) => {
+      containerListeners.push(type);
+      return containerAddEventListener(type, ...rest);
+    }) as typeof container.addEventListener;
     const viewer = new NormalizedPresentationViewer(container, presentation);
 
     await viewer.renderList({ enabled: true, scrollElement: hostScrollArea });
 
-    expect(observedRoots).toEqual([hostScrollArea, hostScrollArea]);
+    expect(hostListeners).toContain('scroll');
+    expect(containerListeners).not.toContain('scroll');
     viewer.destroy();
     hostScrollArea.remove();
     container.remove();
   });
 
-  it('uses its viewport by default and reports the most visible slide', async () => {
-    const callbacks: IntersectionObserverCallback[] = [];
-    const observerRoots: Array<Element | Document | null | undefined> = [];
-    class ObserverStub {
-      constructor(nextCallback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        callbacks.push(nextCallback);
-        observerRoots.push(options?.root);
-      }
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-      takeRecords(): IntersectionObserverEntry[] {
-        return [];
-      }
-      readonly root = null;
-      readonly rootMargin = '';
-      readonly thresholds = [];
-    }
-    vi.stubGlobal('IntersectionObserver', ObserverStub);
+  it('uses its viewport by default and reports the centered slide while scrolling', async () => {
     const container = document.createElement('div');
     container.scrollTop = 500;
     document.body.append(container);
@@ -133,51 +92,38 @@ describe('normalized viewer scrolling', () => {
       onSlideChange: (index) => changes.push(index),
     });
 
-    await viewer.renderList({ enabled: true, initialSlides: 3 });
+    await viewer.renderList({ enabled: true });
 
-    expect(observerRoots).toEqual([container, container]);
     expect(container.scrollTop).toBe(0);
-    const visibilityCallback = callbacks[1];
-    expect(visibilityCallback).toBeDefined();
-    const items = [...container.querySelectorAll<HTMLElement>('[data-rpv-list-item]')];
-    visibilityCallback?.(
-      [
-        {
-          target: items[0]!,
-          isIntersecting: true,
-          intersectionRatio: 0.8,
-          boundingClientRect: { top: 20 },
-        },
-        {
-          target: items[1]!,
-          isIntersecting: true,
-          intersectionRatio: 0.25,
-          boundingClientRect: { top: 700 },
-        },
-      ] as unknown as IntersectionObserverEntry[],
-      {} as IntersectionObserver,
-    );
     expect(viewer.currentSlideIndex).toBe(0);
-
-    visibilityCallback?.(
-      [
-        {
-          target: items[0]!,
-          isIntersecting: true,
-          intersectionRatio: 0.1,
-          boundingClientRect: { top: -600 },
-        },
-        {
-          target: items[1]!,
-          isIntersecting: true,
-          intersectionRatio: 0.9,
-          boundingClientRect: { top: 40 },
-        },
-      ] as unknown as IntersectionObserverEntry[],
-      {} as IntersectionObserver,
-    );
+    // Slides are 720px tall (960px natural width fits the 800px fallback
+    // viewport at scale 1 in jsdom) with a 24px gap: stride 744px.
+    container.scrollTop = 744 + 120;
+    container.dispatchEvent(new Event('scroll'));
+    await Promise.resolve();
     expect(viewer.currentSlideIndex).toBe(1);
     expect(changes).toEqual([0, 1]);
+    viewer.destroy();
+    container.remove();
+  });
+
+  it('keeps slides at fixed absolute offsets so mounting never shifts layout', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(4));
+
+    await viewer.renderList({ enabled: true });
+
+    const sizer = container.querySelector<HTMLElement>('[data-rpv-virtual-sizer]')!;
+    expect(sizer.style.position).toBe('relative');
+    expect(sizer.style.height).toBe(`${4 * 744 - 24}px`);
+    const items = [...container.querySelectorAll<HTMLElement>('[data-rpv-list-item]')];
+    expect(items).toHaveLength(4);
+    items.forEach((item, index) => {
+      expect(item.style.position).toBe('absolute');
+      expect(item.style.height).toBe('720px');
+      expect(item.style.transform).toBe(`translateY(${index * 744}px)`);
+    });
     viewer.destroy();
     container.remove();
   });
@@ -370,7 +316,11 @@ describe('normalized viewer safety and fidelity', () => {
       container.querySelector<HTMLElement>('[data-rpv-node-id="malicious-shape"] span')?.style
         .color,
     ).toBe('');
-    expect(container.querySelector('rect')?.getAttribute('fill')).toBe('#4472c4');
+    expect(
+      container
+        .querySelector('rect[data-xlsx-chart-series-index]')
+        ?.getAttribute('fill'),
+    ).toBe('#4472c4');
     expect(container.innerHTML).not.toMatch(/attacker|javascript:bad|evil\.example/i);
     viewer.destroy();
   });
@@ -705,17 +655,31 @@ describe('normalized viewer safety and fidelity', () => {
 
     await viewer.renderSlide(0);
 
-    const rectangles = [
-      ...container.querySelectorAll<SVGRectElement>('[data-rpv-node-id="sparse-chart"] rect'),
+    const chartMarkup = container.querySelector('[data-rpv-node-id="sparse-chart"]')?.innerHTML ?? '';
+    expect(chartMarkup.length).toBeGreaterThan(0);
+    expect(chartMarkup).not.toContain('NaN');
+    expect(chartMarkup).not.toContain('Infinity');
+    const bars = [
+      ...container.querySelectorAll<SVGRectElement>(
+        '[data-rpv-node-id="sparse-chart"] rect[data-xlsx-chart-series-index]',
+      ),
     ];
-    expect(rectangles).toHaveLength(2);
-    expect(rectangles.every((rectangle) => !rectangle.outerHTML.includes('NaN'))).toBe(true);
-    expect(rectangles.map((rectangle) => rectangle.getAttribute('y'))).toEqual(['60', '220']);
-    expect(rectangles.map((rectangle) => rectangle.getAttribute('height'))).toEqual(['160', '320']);
+    expect(bars.length).toBeGreaterThanOrEqual(2);
+    for (const bar of bars) {
+      expect(Number.isFinite(Number(bar.getAttribute('y')))).toBe(true);
+      expect(Number.isFinite(Number(bar.getAttribute('height')))).toBe(true);
+    }
+    // Value -2 spans twice the plot distance of value 1 around the zero line.
+    const first = bars.find((bar) => bar.getAttribute('data-xlsx-chart-point-index') === '0')!;
+    const last = bars.find((bar) => bar.getAttribute('data-xlsx-chart-point-index') === '4')!;
+    expect(Number(last.getAttribute('height'))).toBeCloseTo(
+      2 * Number(first.getAttribute('height')),
+      5,
+    );
     viewer.destroy();
   });
 
-  it('preserves the established scale floor for positive-only charts', async () => {
+  it('scales positive-only charts from a zero baseline like PowerPoint', async () => {
     const documentModel: PresentationDocument = {
       ...presentation,
       slides: [
@@ -739,11 +703,84 @@ describe('normalized viewer safety and fidelity', () => {
 
     await viewer.renderSlide(0);
 
-    const rectangles = [
-      ...container.querySelectorAll<SVGRectElement>('[data-rpv-node-id="positive-chart"] rect'),
+    const bars = [
+      ...container.querySelectorAll<SVGRectElement>(
+        '[data-rpv-node-id="positive-chart"] rect[data-xlsx-chart-series-index]',
+      ),
     ];
-    expect(rectangles.map((rectangle) => rectangle.getAttribute('y'))).toEqual(['425', '310']);
-    expect(rectangles.map((rectangle) => rectangle.getAttribute('height'))).toEqual(['115', '230']);
+    expect(bars).toHaveLength(2);
+    const heights = bars.map((bar) => Number(bar.getAttribute('height')));
+    expect(heights.every((height) => Number.isFinite(height) && height > 0)).toBe(true);
+    // 0.5 must render exactly twice as tall as 0.25 measured from the zero baseline.
+    expect(heights[1]).toBeCloseTo(2 * heights[0]!, 5);
+    viewer.destroy();
+  });
+
+  it('renders DrawingML picture recolor effects with CSS and SVG filters', async () => {
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'bilevel-image',
+              type: 'image',
+              transform,
+              assetId: 'asset-1',
+              effects: { biLevelThreshold: 0.6 },
+            },
+            {
+              id: 'duotone-image',
+              type: 'image',
+              transform,
+              assetId: 'asset-1',
+              effects: { duotone: [{ value: '#000000' }, { value: '#4472C4' }] },
+            },
+            {
+              id: 'gray-image',
+              type: 'image',
+              transform,
+              assetId: 'asset-1',
+              effects: { grayscale: true, brightness: 0.2, contrast: -0.1 },
+            },
+          ],
+        },
+      ],
+      assets: {
+        'asset-1': {
+          id: 'asset-1',
+          contentType: 'image/png',
+          byteLength: 4,
+          data: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+    };
+    const container = document.createElement('div');
+    const viewer = new NormalizedPresentationViewer(container, documentModel);
+
+    await viewer.renderSlide(0);
+
+    const biLevel = container.querySelector<HTMLImageElement>(
+      '[data-rpv-node-id="bilevel-image"] img',
+    )!;
+    expect(biLevel.style.filter).toContain('grayscale(1)');
+    expect(biLevel.style.filter).toContain('contrast(9999)');
+    expect(biLevel.style.filter).toMatch(/brightness\(0\.8333/);
+
+    const duotone = container.querySelector<HTMLImageElement>(
+      '[data-rpv-node-id="duotone-image"] img',
+    )!;
+    expect(duotone.style.filter).toMatch(/^url\("?#rpv-duotone-\d+"?\)$/);
+    const filterId = duotone.style.filter.match(/#(rpv-duotone-\d+)/)?.[1];
+    const filterElement = container.querySelector(`#${filterId}`)!;
+    expect(filterElement.querySelector('feComponentTransfer feFuncB')?.getAttribute('tableValues')).toBe(
+      `0 ${196 / 255}`,
+    );
+
+    const gray = container.querySelector<HTMLImageElement>('[data-rpv-node-id="gray-image"] img')!;
+    expect(gray.style.filter).toBe('grayscale(1) brightness(1.2) contrast(0.9)');
     viewer.destroy();
   });
 
@@ -849,40 +886,62 @@ describe('normalized viewer generations and windowing', () => {
   });
 
   it('unmounts slides outside overscan and mounts navigation targets', async () => {
-    const callbacks = installObserverStub();
     const container = document.createElement('div');
+    document.body.append(container);
     const changes: number[] = [];
     const unmounted: number[] = [];
-    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(3), {
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(8), {
       onSlideChange: (index) => changes.push(index),
       onSlideUnmounted: (index) => unmounted.push(index),
     });
 
-    await viewer.renderList({ enabled: true, initialSlides: 1 });
+    // 720px slides + 24px gap against the 600px fallback viewport; overscan 0
+    // keeps the mounted window tight around the visible slide.
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
 
     const items = [...container.querySelectorAll<HTMLElement>('[data-rpv-list-item]')];
+    expect(items).toHaveLength(8);
     expect(items[0]!.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
-    expect(items[2]!.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
-    callbacks[0]?.(
-      [
-        { target: items[0], isIntersecting: false },
-        { target: items[2], isIntersecting: true },
-      ] as unknown as IntersectionObserverEntry[],
-      {} as IntersectionObserver,
-    );
-    await Promise.resolve();
-    expect(items[0]!.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
-    expect(items[2]!.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
-    expect(unmounted).toContain(0);
+    expect(items[4]!.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
 
-    await viewer.goToSlide(1);
-    expect(items[1]!.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
-    expect(changes).toEqual([0, 1]);
+    container.scrollTop = 4 * 744;
+    container.dispatchEvent(new Event('scroll'));
+    await Promise.resolve();
+    expect(items[4]!.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
+    expect(items[0]!.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
+    expect(unmounted).toContain(0);
+    expect(viewer.currentSlideIndex).toBe(4);
+
+    await viewer.goToSlide(6);
+    expect(items[6]!.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
+    expect(changes).toEqual([0, 4, 6]);
     viewer.destroy();
+    container.remove();
+  });
+
+  it('does not move the viewport when navigating to the already-current slide', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const scrollTo = vi.fn();
+    container.scrollTo = scrollTo as unknown as typeof container.scrollTo;
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(3));
+
+    await viewer.renderList({ enabled: true });
+    scrollTo.mockClear();
+
+    // Controlled hosts echo the visible slide back while the user scrolls;
+    // re-navigating to it must not snap the scroll position.
+    await viewer.goToSlide(0);
+    expect(scrollTo).not.toHaveBeenCalled();
+
+    await viewer.goToSlide(2);
+    expect(scrollTo).toHaveBeenCalled();
+    expect(viewer.currentSlideIndex).toBe(2);
+    viewer.destroy();
+    container.remove();
   });
 
   it('mounts and scopes highlights to the result slide as a visible sibling overlay', async () => {
-    installObserverStub();
     const repeatedNode = shape('repeated-id', 'Repeated');
     const container = document.createElement('div');
     const viewer = new NormalizedPresentationViewer(

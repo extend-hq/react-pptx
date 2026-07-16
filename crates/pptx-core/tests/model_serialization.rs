@@ -110,6 +110,7 @@ fn image_fields_serialize_to_the_typescript_model_contract() {
         crop: None,
         opacity: None,
         preserve_aspect_ratio: true,
+        effects: None,
     };
 
     let value = serde_json::to_value(node).unwrap();
@@ -164,6 +165,9 @@ fn structured_nodes_serialize_to_the_typescript_model_contract() {
             color: None,
         }],
         has_legend: Some(true),
+        chart_xml: Some("<c:chartSpace/>".into()),
+        chart_style_xml: None,
+        chart_colors_xml: None,
     };
 
     let group = serde_json::to_value(group).unwrap();
@@ -183,6 +187,9 @@ fn structured_nodes_serialize_to_the_typescript_model_contract() {
     assert_eq!(chart["series"][0]["categories"], json!(["Q1"]));
     assert_eq!(chart["series"][0]["values"], json!([42.0]));
     assert_eq!(chart["hasLegend"], true);
+    assert_eq!(chart["chartXml"], "<c:chartSpace/>");
+    assert!(chart.get("chart_xml").is_none());
+    assert!(chart.get("chartStyleXml").is_none());
 }
 
 #[test]

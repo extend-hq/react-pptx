@@ -148,6 +148,8 @@ pub enum SlideNode {
         #[serde(skip_serializing_if = "Option::is_none")]
         opacity: Option<f64>,
         preserve_aspect_ratio: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effects: Option<ImageEffects>,
     },
     Group {
         id: String,
@@ -177,6 +179,16 @@ pub enum SlideNode {
         series: Vec<ChartSeries>,
         #[serde(skip_serializing_if = "Option::is_none")]
         has_legend: Option<bool>,
+        /// Raw DrawingML chart part XML (`c:chartSpace` or `cx:chartSpace`) so
+        /// viewers can render with full PowerPoint fidelity.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chart_xml: Option<String>,
+        /// Companion Microsoft chart style part (`style*.xml`), when present.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chart_style_xml: Option<String>,
+        /// Companion Microsoft chart color style part (`colors*.xml`), when present.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        chart_colors_xml: Option<String>,
     },
     Unknown {
         id: String,
@@ -224,6 +236,27 @@ pub struct ImageCrop {
     pub left: f64,
 }
 
+/// DrawingML picture color effects applied to an `a:blip`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageEffects {
+    /// `a:biLevel` black/white threshold, normalized to 0..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bi_level_threshold: Option<f64>,
+    /// `a:grayscl` grayscale recolor.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub grayscale: Option<bool>,
+    /// `a:duotone` two-color ramp, dark then light.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duotone: Option<Vec<ColorValue>>,
+    /// `a:lum` brightness, normalized to -1..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<f64>,
+    /// `a:lum` contrast, normalized to -1..1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contrast: Option<f64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChartSeries {
@@ -245,7 +278,7 @@ pub struct ShapeGeometry {
     pub path: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorValue {
     pub value: String,
@@ -295,6 +328,8 @@ pub enum FillStyle {
         crop: Option<ImageCrop>,
         #[serde(skip_serializing_if = "Option::is_none")]
         opacity: Option<f64>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        effects: Option<ImageEffects>,
     },
 }
 

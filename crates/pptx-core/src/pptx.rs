@@ -44,6 +44,11 @@ fn normalize_target(base: &str, target: &str) -> String {
     {
         return target.to_owned();
     }
+    // OPC relationship targets may be package-absolute ("/ppt/charts/chart1.xml").
+    let (base, target) = match target.strip_prefix('/') {
+        Some(absolute) => ("", absolute),
+        None => (base, target),
+    };
     let mut parts: Vec<&str> = base.split('/').collect();
     parts.pop();
     for part in target.split('/') {
@@ -76,6 +81,54 @@ fn read_entry(
         .read_to_end(&mut bytes)
         .map_err(|error| ParseError::Corrupt(error.to_string()))?;
     Ok(Some(bytes))
+}
+
+const CHART_STYLE_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2011/relationships/chartStyle";
+const CHART_COLOR_STYLE_REL_TYPE: &str =
+    "http://schemas.microsoft.com/office/2011/relationships/chartColorStyle";
+
+/// Companion Microsoft chart style parts resolved from a chart part's rels.
+#[derive(Debug, Clone, Default)]
+struct ChartCompanionParts {
+    style_xml: Option<String>,
+    colors_xml: Option<String>,
+}
+
+fn relationship_targets_by_type(
+    xml: &[u8],
+    base: &str,
+    max_depth: usize,
+) -> Result<Vec<(String, String)>, ParseError> {
+    let mut reader = Reader::from_reader(xml);
+    reader.config_mut().trim_text(true);
+    let mut result = Vec::new();
+    let mut depth = 0usize;
+    loop {
+        let event = reader.read_event();
+        match event {
+            Ok(Event::Start(ref start)) | Ok(Event::Empty(ref start)) => {
+                if matches!(event, Ok(Event::Start(_))) {
+                    depth += 1;
+                    if depth > max_depth {
+                        return Err(ParseError::ResourceLimit("XML nesting depth".into()));
+                    }
+                }
+                if local_name(start.name().as_ref()) == b"Relationship" {
+                    if let (Some(rel_type), Some(target)) =
+                        (attr(start, b"Type"), attr(start, b"Target"))
+                    {
+                        result.push((rel_type, normalize_target(base, &target)));
+                    }
+                }
+            }
+            Ok(Event::End(_)) => depth = depth.saturating_sub(1),
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(ParseError::Corrupt(format!("relationship XML: {error}"))),
+            _ => {}
+        }
+    }
+    Ok(result)
 }
 
 fn relationships(
@@ -1124,7 +1177,60 @@ fn image_crop(fill: &XmlNode) -> Option<crate::ImageCrop> {
     (crop.top != 0.0 || crop.right != 0.0 || crop.bottom != 0.0 || crop.left != 0.0).then_some(crop)
 }
 
-fn parse_blip_fill(fill: &XmlNode, rels: &HashMap<String, String>) -> Option<FillStyle> {
+/// Parse DrawingML recolor effects declared directly on an `a:blip`.
+fn parse_blip_effects(
+    blip: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+) -> Option<crate::ImageEffects> {
+    let mut effects = crate::ImageEffects::default();
+    let mut any = false;
+    if let Some(node) = blip.child("biLevel") {
+        effects.bi_level_threshold = Some(
+            node.attr("thresh")
+                .and_then(percentage)
+                .map(|value| value.clamp(0.0, 1.0))
+                .unwrap_or(0.5),
+        );
+        any = true;
+    }
+    if blip.child("grayscl").is_some() {
+        effects.grayscale = Some(true);
+        any = true;
+    }
+    if let Some(node) = blip.child("duotone") {
+        let colors = node
+            .children
+            .iter()
+            .filter_map(|child| parse_color(child, context))
+            .collect::<Vec<_>>();
+        if colors.len() >= 2 {
+            effects.duotone = Some(colors.into_iter().take(2).collect());
+            any = true;
+        }
+    }
+    if let Some(node) = blip.child("lum") {
+        let brightness = node
+            .attr("bright")
+            .and_then(percentage)
+            .map(|value| value.clamp(-1.0, 1.0));
+        let contrast = node
+            .attr("contrast")
+            .and_then(percentage)
+            .map(|value| value.clamp(-1.0, 1.0));
+        if brightness.is_some() || contrast.is_some() {
+            effects.brightness = brightness;
+            effects.contrast = contrast;
+            any = true;
+        }
+    }
+    any.then_some(effects)
+}
+
+fn parse_blip_fill(
+    fill: &XmlNode,
+    context: Option<&ColorContext<'_>>,
+    rels: &HashMap<String, String>,
+) -> Option<FillStyle> {
     let blip = fill.child("blip")?;
     let relationship = blip.attr("embed").or_else(|| blip.attr("link"))?;
     let asset_id = rels.get(relationship)?.clone();
@@ -1143,6 +1249,7 @@ fn parse_blip_fill(fill: &XmlNode, rels: &HashMap<String, String>) -> Option<Fil
         },
         crop: image_crop(fill),
         opacity,
+        effects: parse_blip_effects(blip, context),
     })
 }
 
@@ -1196,7 +1303,7 @@ fn parse_fill_with_placeholder(
         });
     }
     if let Some(fill) = named_fill(properties, "blipFill") {
-        return parse_blip_fill(fill, rels);
+        return parse_blip_fill(fill, context, rels);
     }
     None
 }
@@ -2108,6 +2215,7 @@ struct NodeParseContext<'a, 'color> {
     slide_index: usize,
     rels: &'a HashMap<String, String>,
     related_parts: &'a HashMap<String, Vec<u8>>,
+    chart_companions: &'a HashMap<String, ChartCompanionParts>,
     limits: &'a ParseLimits,
     colors: Option<&'a ColorContext<'color>>,
     diagnostics: &'a ParseDiagnostics,
@@ -2262,6 +2370,10 @@ fn parse_image_node(
         .as_ref()
         .map(|(fill, _)| fill.child("stretch").is_none())
         .unwrap_or(true);
+    let effects = resolved_fill.as_ref().and_then(|(fill, _)| {
+        fill.child("blip")
+            .and_then(|blip| parse_blip_effects(blip, context.colors))
+    });
     if asset_id.is_none() {
         context.diagnostics.warn(
             "missing-asset",
@@ -2277,6 +2389,7 @@ fn parse_image_node(
         crop,
         opacity,
         preserve_aspect_ratio,
+        effects,
     }
 }
 
@@ -2735,7 +2848,15 @@ fn parse_chart_part(
     let (chart_node, chart_type) = chart_types
         .iter()
         .find_map(|(element, kind)| root.descendant(element).map(|node| (node, *kind)))
-        .unwrap_or((&root, "ooxml"));
+        .unwrap_or_else(|| {
+            // Modern chartEx parts (`cx:chartSpace`) carry their cached data in
+            // `chartData`; classic parts always declare one of the types above.
+            if root.descendant("chartData").is_some() {
+                (&root, "chartEx")
+            } else {
+                (&root, "ooxml")
+            }
+        });
     let series = chart_node
         .children_named("ser")
         .map(|series| {
@@ -3167,22 +3288,29 @@ fn parse_graphic_frame(
     if let Some(chart) = graphic_data.and_then(|value| value.child("chart")) {
         let relationship = chart.attr("id");
         let path = relationship.and_then(|value| context.rels.get(value));
-        let chart = if let Some((path, xml)) =
-            path.and_then(|path| context.related_parts.get(path).map(|xml| (path, xml)))
-        {
-            parse_chart_part(xml, context.limits, path, context.colors)?
+        let resolved = path.and_then(|path| context.related_parts.get(path).map(|xml| (path, xml)));
+        let (chart, chart_xml, companions) = if let Some((path, xml)) = resolved {
+            (
+                parse_chart_part(xml, context.limits, path, context.colors)?,
+                Some(String::from_utf8_lossy(xml).into_owned()),
+                context.chart_companions.get(path),
+            )
         } else {
             context.diagnostics.warn(
                 "missing-part",
                 "Chart relationship or chart part could not be resolved.",
                 Some("chart"),
             );
-            ParsedChart {
-                chart_type: "ooxml".into(),
-                title: None,
-                series: Vec::new(),
-                has_legend: None,
-            }
+            (
+                ParsedChart {
+                    chart_type: "ooxml".into(),
+                    title: None,
+                    series: Vec::new(),
+                    has_legend: None,
+                },
+                None,
+                None,
+            )
         };
         let (id, name) = node_identity(node, context.slide_index, node_index);
         return Ok(SlideNode::Chart {
@@ -3193,6 +3321,9 @@ fn parse_graphic_frame(
             title: chart.title,
             series: chart.series,
             has_legend: chart.has_legend,
+            chart_xml,
+            chart_style_xml: companions.and_then(|parts| parts.style_xml.clone()),
+            chart_colors_xml: companions.and_then(|parts| parts.colors_xml.clone()),
         });
     }
     if let Some(smartart) = graphic_data.filter(|value| value.descendant("relIds").is_some()) {
@@ -3257,6 +3388,29 @@ fn parse_slide_node(
         "pic" => Ok(Some(parse_image_node(node, node_index, context))),
         "grpSp" => Ok(Some(parse_group_node(node, node_index, context)?)),
         "graphicFrame" => Ok(Some(parse_graphic_frame(node, node_index, context)?)),
+        // Markup-compatibility wrapper used by PowerPoint for modern content
+        // (chartEx funnel/treemap/waterfall charts, newer media). Prefer the
+        // richest branch that parses to a supported node, otherwise keep any
+        // fallback rendering.
+        "AlternateContent" => {
+            let mut fallback: Option<SlideNode> = None;
+            for branch_name in ["Choice", "Fallback"] {
+                for branch in node.children_named(branch_name) {
+                    for child in &branch.children {
+                        let Some(parsed) = parse_slide_node(child, node_index, context)? else {
+                            continue;
+                        };
+                        if !matches!(parsed, SlideNode::Unknown { .. }) {
+                            return Ok(Some(parsed));
+                        }
+                        if fallback.is_none() {
+                            fallback = Some(parsed);
+                        }
+                    }
+                }
+            }
+            Ok(fallback)
+        }
         "nvGrpSpPr" | "grpSpPr" | "extLst" => Ok(None),
         feature => {
             context.diagnostics.warn(
@@ -3372,6 +3526,7 @@ fn parse_slide(
                 slide_index: context.slide_index,
                 rels: master_rels,
                 related_parts: context.related_parts,
+                chart_companions: context.chart_companions,
                 limits: context.limits,
                 colors: context.colors,
                 diagnostics: context.diagnostics,
@@ -3394,6 +3549,7 @@ fn parse_slide(
             slide_index: context.slide_index,
             rels: layout_rels,
             related_parts: context.related_parts,
+            chart_companions: context.chart_companions,
             limits: context.limits,
             colors: context.colors,
             diagnostics: context.diagnostics,
@@ -3706,9 +3862,37 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
             .cloned()
             .collect::<Vec<_>>();
         let mut related_parts = HashMap::new();
+        let mut chart_companions: HashMap<String, ChartCompanionParts> = HashMap::new();
         for target in related_paths {
             if let Some(bytes) = read_entry(&mut archive, &target, limits)? {
-                related_parts.insert(target, bytes);
+                let is_chart_part = target.starts_with("ppt/charts/");
+                related_parts.insert(target.clone(), bytes);
+                if !is_chart_part || chart_companions.contains_key(&target) {
+                    continue;
+                }
+                let Some(rels_xml) =
+                    read_entry(&mut archive, &relationship_part_path(&target), limits)?
+                else {
+                    continue;
+                };
+                let mut companions = ChartCompanionParts::default();
+                for (rel_type, rel_target) in
+                    relationship_targets_by_type(&rels_xml, &target, limits.max_xml_depth)?
+                {
+                    let slot = match rel_type.as_str() {
+                        CHART_STYLE_REL_TYPE => &mut companions.style_xml,
+                        CHART_COLOR_STYLE_REL_TYPE => &mut companions.colors_xml,
+                        _ => continue,
+                    };
+                    if slot.is_none() {
+                        if let Some(bytes) = read_entry(&mut archive, &rel_target, limits)? {
+                            *slot = Some(String::from_utf8_lossy(&bytes).into_owned());
+                        }
+                    }
+                }
+                if companions.style_xml.is_some() || companions.colors_xml.is_some() {
+                    chart_companions.insert(target, companions);
+                }
             }
         }
         for rels in [
@@ -3773,6 +3957,7 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 slide_index: index,
                 rels: &slide_rels,
                 related_parts: &related_parts,
+                chart_companions: &chart_companions,
                 limits,
                 colors: Some(&colors),
                 diagnostics: &diagnostics,
@@ -3863,6 +4048,7 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
     }
 
     let empty_related_parts = HashMap::new();
+    let empty_chart_companions = HashMap::new();
     let mut masters = Vec::new();
     for part in master_parts.values() {
         let theme_path = related_path(&part.rels, "ppt/theme/");
@@ -3879,6 +4065,7 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 slide_index: 0,
                 rels: &part.rels,
                 related_parts: &empty_related_parts,
+                chart_companions: &empty_chart_companions,
                 limits,
                 colors: Some(&colors),
                 diagnostics: &diagnostics,
@@ -3924,6 +4111,7 @@ pub fn parse(bytes: &[u8], limits: &ParseLimits) -> Result<PresentationDocument,
                 slide_index: 0,
                 rels: &part.rels,
                 related_parts: &empty_related_parts,
+                chart_companions: &empty_chart_companions,
                 limits,
                 colors: Some(&colors),
                 diagnostics: &diagnostics,
@@ -4058,7 +4246,7 @@ mod tests {
         );
         let rels = HashMap::from([("rId1".into(), "ppt/media/image.png".into())]);
         assert!(matches!(
-            parse_blip_fill(&fill, &rels),
+            parse_blip_fill(&fill, None, &rels),
             Some(FillStyle::Image { opacity: Some(value), .. }) if (value - 0.14).abs() < f64::EPSILON
         ));
     }

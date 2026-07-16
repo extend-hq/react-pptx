@@ -229,12 +229,13 @@ describe('ReactPptxViewer adapter lifecycle', () => {
           source={source}
           mode="continuous"
           fitMode="none"
-          virtualization={{ enabled: true, initialSlides: 1 }}
+          virtualization={{ enabled: true, overscanViewport: 0 }}
           onViewportReady={onViewportReady}
         />,
       );
     });
-    await waitFor(() => expect(host.querySelectorAll('[data-rpv-slide-wrapper]')).toHaveLength(1));
+    // Windowed mode only mounts the visible slide plus one overscan slide.
+    await waitFor(() => expect(host.querySelectorAll('[data-rpv-slide-wrapper]')).toHaveLength(2));
 
     await act(async () => {
       root.render(

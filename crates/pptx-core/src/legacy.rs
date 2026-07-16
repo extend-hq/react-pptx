@@ -735,6 +735,7 @@ impl ShapeCollector<'_> {
                 crop: None,
                 opacity: None,
                 preserve_aspect_ratio: !covers_slide,
+                effects: None,
             });
             return;
         }
