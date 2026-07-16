@@ -101,10 +101,15 @@ jobs:
           if (!manifest.dist?.shasum) {
             throw new Error(`npm registry did not return a tarball shasum for ${name}@${version}`);
           }
+          const tarballUrl = new URL(manifest.dist.tarball);
+          if (tarballUrl.protocol !== 'https:' || tarballUrl.hostname !== 'registry.npmjs.org') {
+            throw new Error(`npm registry returned an unexpected tarball URL for ${name}@${version}`);
+          }
 
           console.log('published=true');
           console.log(`git_head=${manifest.gitHead ?? ''}`);
           console.log(`shasum=${manifest.dist.shasum}`);
+          console.log(`tarball_url=${tarballUrl}`);
           console.error(`${name}@${version} already exists on npm.`);
           NODE
         env:
@@ -158,16 +163,44 @@ jobs:
           steps.npm_state.outputs.published == 'true' &&
           steps.npm_state.outputs.git_head == ''
         env:
-          EXPECTED_SHASUM: ${{ steps.npm_state.outputs.shasum }}
           PACKAGE_TARBALL: ${{ runner.temp }}/react-pptx.tgz
+          PUBLISHED_TARBALL_URL: ${{ steps.npm_state.outputs.tarball_url }}
         run: |
-          ACTUAL_SHASUM=$(sha1sum "$PACKAGE_TARBALL" | cut -d ' ' -f 1)
-          if [ "$ACTUAL_SHASUM" != "$EXPECTED_SHASUM" ]; then
-            echo "The existing npm tarball has shasum $EXPECTED_SHASUM, but the validated commit packs to $ACTUAL_SHASUM." >&2
-            exit 1
-          fi
+          LOCAL_DIR=$(mktemp -d)
+          PUBLISHED_DIR=$(mktemp -d)
+          PUBLISHED_TARBALL=$(mktemp)
+
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$PUBLISHED_TARBALL" \
+            "$PUBLISHED_TARBALL_URL"
+          tar -xzf "$PACKAGE_TARBALL" -C "$LOCAL_DIR"
+          tar -xzf "$PUBLISHED_TARBALL" -C "$PUBLISHED_DIR"
+
+          diff --recursive --no-dereference "$LOCAL_DIR/package" "$PUBLISHED_DIR/package"
+          (
+            cd "$LOCAL_DIR/package"
+            find . -printf '%m %y %p %l\n' | LC_ALL=C sort
+          ) > "$LOCAL_DIR/metadata"
+          (
+            cd "$PUBLISHED_DIR/package"
+            find . -printf '%m %y %p %l\n' | LC_ALL=C sort
+          ) > "$PUBLISHED_DIR/metadata"
+          diff --unified "$LOCAL_DIR/metadata" "$PUBLISHED_DIR/metadata"
+
           echo "verified=true" >> "$GITHUB_OUTPUT"
-          echo "The existing npm tarball exactly matches the validated commit."
+          echo "The existing npm package contents exactly match the validated commit."
+
+      - name: Upload a mismatched release tarball for diagnosis
+        if: >-
+          failure() &&
+          steps.npm_state.outputs.published == 'true' &&
+          steps.npm_state.outputs.git_head == ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: react-pptx-mismatch-${{ github.event.workflow_run.head_sha }}
+          path: ${{ runner.temp }}/react-pptx.tgz
+          retention-days: 1
 
       - name: Upload the verified release tarball
         if: steps.npm_state.outputs.published != 'true'
@@ -212,11 +245,11 @@ jobs:
           if [ "${{ needs.prepare.outputs.published }}" = "true" ]; then
             if [ -z "$PUBLISHED_GIT_HEAD" ] || [ "$PUBLISHED_GIT_HEAD" = "null" ]; then
               if [ "$TARBALL_VERIFIED" != "true" ]; then
-                echo "The existing npm version exposes no gitHead and its tarball was not verified; refusing to create a possibly incorrect tag." >&2
+                echo "The existing npm version exposes no gitHead and its package contents were not verified; refusing to create a possibly incorrect tag." >&2
                 exit 1
               fi
               echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-              echo "The existing npm tarball matches the validated commit exactly."
+              echo "The existing npm package contents match the validated commit exactly."
               exit 0
             fi
             if ! git cat-file -e "$PUBLISHED_GIT_HEAD^{commit}" 2> /dev/null; then
