@@ -25,11 +25,13 @@ interface PrefetchedThumbnail {
 function normalizeSlideIndexes(
   indexes: readonly number[] | undefined,
   slideCount: number,
+  sort = true,
 ): number[] {
   if (!indexes?.length || slideCount <= 0) return [];
-  return [...new Set(indexes)]
-    .filter((index) => Number.isInteger(index) && index >= 0 && index < slideCount)
-    .sort((left, right) => left - right);
+  const normalized = [...new Set(indexes)].filter(
+    (index) => Number.isInteger(index) && index >= 0 && index < slideCount,
+  );
+  return sort ? normalized.sort((left, right) => left - right) : normalized;
 }
 
 function finitePositive(value: number | undefined): number | undefined {
@@ -88,6 +90,7 @@ export function usePptxViewerThumbnails(
   const attachedElementsRef = useRef(new Map<number, HTMLElement>());
   const cleanupsRef = useRef(new Map<number, () => void>());
   const prefetchedRef = useRef(new Map<number, PrefetchedThumbnail>());
+  const prefetchInFlightRef = useRef(new Map<number, Promise<void>>());
   const renderGenerationRef = useRef(new Map<number, number>());
   const refCallbacksRef = useRef(new Map<number, (element: HTMLElement | null) => void>());
   const attachRef = useRef<(index: number, element: HTMLElement | null) => void>(() => {});
@@ -100,7 +103,7 @@ export function usePptxViewerThumbnails(
     [options.renderWindow?.visibleSlideIndexes, slideCount],
   );
   const prefetchSlideIndexes = useMemo(
-    () => normalizeSlideIndexes(options.renderWindow?.prefetchSlideIndexes, slideCount),
+    () => normalizeSlideIndexes(options.renderWindow?.prefetchSlideIndexes, slideCount, false),
     [options.renderWindow?.prefetchSlideIndexes, slideCount],
   );
   const visibleSlideIndexesKey = visibleSlideIndexes.join(',');
@@ -231,39 +234,58 @@ export function usePptxViewerThumbnails(
 
   const prefetchThumbnail = useCallback(
     async (slideIndex: number): Promise<void> => {
-      if (
-        disabled ||
-        !controller?.isReady() ||
-        attachedElementsRef.current.has(slideIndex) ||
-        prefetchedRef.current.has(slideIndex)
-      ) {
-        return;
-      }
-
-      const generation = (renderGenerationRef.current.get(slideIndex) ?? 0) + 1;
-      renderGenerationRef.current.set(slideIndex, generation);
-      const element = globalThis.document.createElement('div');
-      setThumbnailState(slideIndex, { status: 'rendering' });
-      try {
-        const cleanup = await controller.renderThumbnail(slideIndex, element, {
-          width: size.width,
-        });
+      while (true) {
+        const existing = prefetchInFlightRef.current.get(slideIndex);
+        if (existing) {
+          await existing;
+          continue;
+        }
         if (
-          !mountedRef.current ||
-          renderGenerationRef.current.get(slideIndex) !== generation ||
+          disabled ||
+          !controller?.isReady() ||
           attachedElementsRef.current.has(slideIndex) ||
+          prefetchedRef.current.has(slideIndex) ||
           !requestedPrefetchSlideIndexSetRef.current.has(slideIndex)
         ) {
-          cleanup();
           return;
         }
-        prefetchedRef.current.set(slideIndex, { cleanup, element, width: size.width });
-        setThumbnailState(slideIndex, { status: 'ready' });
-      } catch (reason: unknown) {
-        if (!mountedRef.current || renderGenerationRef.current.get(slideIndex) !== generation) {
-          return;
+
+        const generation = (renderGenerationRef.current.get(slideIndex) ?? 0) + 1;
+        renderGenerationRef.current.set(slideIndex, generation);
+        const element = globalThis.document.createElement('div');
+        setThumbnailState(slideIndex, { status: 'rendering' });
+        const pending = (async () => {
+          try {
+            const cleanup = await controller.renderThumbnail(slideIndex, element, {
+              width: size.width,
+            });
+            if (
+              !mountedRef.current ||
+              renderGenerationRef.current.get(slideIndex) !== generation ||
+              attachedElementsRef.current.has(slideIndex) ||
+              !requestedPrefetchSlideIndexSetRef.current.has(slideIndex)
+            ) {
+              cleanup();
+              return;
+            }
+            prefetchedRef.current.set(slideIndex, { cleanup, element, width: size.width });
+            setThumbnailState(slideIndex, { status: 'ready' });
+          } catch (reason: unknown) {
+            if (!mountedRef.current || renderGenerationRef.current.get(slideIndex) !== generation) {
+              return;
+            }
+            setThumbnailState(slideIndex, { error: asError(reason), status: 'error' });
+          }
+        })();
+        prefetchInFlightRef.current.set(slideIndex, pending);
+        try {
+          await pending;
+        } finally {
+          if (prefetchInFlightRef.current.get(slideIndex) === pending) {
+            prefetchInFlightRef.current.delete(slideIndex);
+          }
         }
-        setThumbnailState(slideIndex, { error: asError(reason), status: 'error' });
+        return;
       }
     },
     [controller, disabled, setThumbnailState, size.width],
@@ -280,15 +302,20 @@ export function usePptxViewerThumbnails(
       cleanupsRef.current.clear();
       for (const prefetched of prefetchedRef.current.values()) prefetched.cleanup();
       prefetchedRef.current.clear();
+      prefetchInFlightRef.current.clear();
     };
   }, []);
 
   useEffect(
     () => () => {
+      for (const index of prefetchInFlightRef.current.keys()) invalidateThumbnail(index);
+      // The invalidated promises may belong to a previous controller or
+      // resolution and must not gate replacement work for the same slide.
+      prefetchInFlightRef.current.clear();
       for (const prefetched of prefetchedRef.current.values()) prefetched.cleanup();
       prefetchedRef.current.clear();
     },
-    [controller, size.width],
+    [controller, invalidateThumbnail, size.width],
   );
 
   useEffect(() => {
@@ -299,6 +326,17 @@ export function usePptxViewerThumbnails(
     for (const index of [...prefetchedRef.current.keys()]) {
       if (disabled || !requestedPrefetchSlideIndexSetRef.current.has(index)) {
         disposePrefetchedThumbnail(index);
+        if (!attachedElementsRef.current.has(index)) setThumbnailState(index, { status: 'idle' });
+      }
+    }
+    for (const index of prefetchInFlightRef.current.keys()) {
+      if (
+        disabled ||
+        attachedElementsRef.current.has(index) ||
+        !requestedPrefetchSlideIndexSetRef.current.has(index)
+      ) {
+        invalidateThumbnail(index);
+        prefetchInFlightRef.current.delete(index);
         if (!attachedElementsRef.current.has(index)) setThumbnailState(index, { status: 'idle' });
       }
     }
@@ -317,6 +355,7 @@ export function usePptxViewerThumbnails(
   }, [
     disabled,
     disposePrefetchedThumbnail,
+    invalidateThumbnail,
     prefetchSlideIndexesKey,
     prefetchThumbnail,
     setThumbnailState,

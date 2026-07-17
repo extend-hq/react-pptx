@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Make slide navigation observable before off-window rendering completes, isolate resource
+  readiness per slide mount, update zoom and fit geometry without rebuilding mounted slide DOM,
+  and reduce thumbnail work outside the visible rail.
 - Expose consumer-owned slide thumbnail rails through `usePptxViewerThumbnails`, including stable
   container refs, resolution bounds, render status, imperative rendering, and cleanup. Add
   DOCX-style visible/prefetch render windows and virtualize the built-in thumbnail scrollport.

@@ -42,7 +42,7 @@ interface AdapterState {
 }
 
 const THUMBNAIL_ROW_ESTIMATE = 123;
-const THUMBNAIL_OVERSCAN = 3;
+const THUMBNAIL_OVERSCAN = 1;
 const THUMBNAIL_INITIAL_RECT = { height: 780, width: 184 };
 const observeThumbnailFilmstripRect: NonNullable<
   VirtualizerOptions<HTMLElement, HTMLElement>['observeElementRect']

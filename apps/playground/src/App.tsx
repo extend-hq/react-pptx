@@ -20,8 +20,8 @@ const ZOOM_OPTIONS = [50, 75, 90, 100, 110, 125, 150, 175, 200] as const;
 const MIN_ZOOM = ZOOM_OPTIONS[0];
 const MAX_ZOOM = ZOOM_OPTIONS[ZOOM_OPTIONS.length - 1] ?? 200;
 const THUMBNAIL_ROW_ESTIMATE = 134;
-const THUMBNAIL_OVERSCAN = 3;
-const THUMBNAIL_PREFETCH = 3;
+const THUMBNAIL_OVERSCAN = 1;
+const THUMBNAIL_PREFETCH = 2;
 
 function buildThumbnailRenderWindow(visibleIndexes: readonly number[], slideCount: number) {
   const visibleSlideIndexes = [...new Set(visibleIndexes)]

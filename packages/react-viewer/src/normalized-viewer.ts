@@ -46,6 +46,7 @@ interface DisposableHandle {
   element: HTMLElement;
   target: HTMLElement;
   ready: Promise<void>;
+  setScale(scale: number): void;
   dispose(): void;
 }
 
@@ -59,6 +60,7 @@ interface ListPlaceholder {
   mount(): Promise<void>;
   unmount(): void;
   isMounted(): boolean;
+  setScale(scale: number): void;
 }
 
 interface ActiveListState {
@@ -67,6 +69,11 @@ interface ActiveListState {
   placeholders: ListPlaceholder[];
   /** Deterministic offset navigation provided by the TanStack virtualizer. */
   scrollToIndex?: (index: number, options?: ScrollIntoViewOptions) => void;
+  /** Recomputes list geometry without rebuilding slide DOM. */
+  updateScale?: () => void;
+  /** Temporarily leaves a navigation target as an empty shell so scrolling can paint first. */
+  deferMount?: (index: number) => void;
+  resumeMount?: (index: number) => void;
 }
 
 /** Vertical spacing between slides in continuous mode, in CSS pixels. */
@@ -77,6 +84,17 @@ const LIST_ITEM_GAP = 24;
  * display: none) so the virtualizer still mounts an initial window.
  */
 const FALLBACK_VIEWPORT_RECT = { width: 800, height: 600 };
+
+function scaleListAnchorOffset(
+  offset: number,
+  previousSlideHeight: number,
+  nextSlideHeight: number,
+): number {
+  if (previousSlideHeight <= 0) return offset;
+  if (offset <= previousSlideHeight) return offset * (nextSlideHeight / previousSlideHeight);
+  // The inter-slide gap is fixed CSS geometry and should not grow with zoom.
+  return nextSlideHeight + (offset - previousSlideHeight);
+}
 
 const METAFILE_FONT_MAP = Object.fromEntries(
   Object.entries(OFFICE_FONT_FALLBACKS).map(([family, fallbacks]) => [
@@ -504,8 +522,7 @@ function applyGeometry(element: HTMLElement, preset?: string): void {
       element.style.clipPath = 'polygon(0 0, 70% 0, 100% 50%, 70% 100%, 0 100%, 30% 50%)';
       break;
     case 'rightArrow':
-      element.style.clipPath =
-        'polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)';
+      element.style.clipPath = 'polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)';
       break;
     case 'leftArrow':
       element.style.clipPath =
@@ -516,8 +533,7 @@ function applyGeometry(element: HTMLElement, preset?: string): void {
         'polygon(50% 0, 100% 25%, 75% 25%, 75% 100%, 25% 100%, 25% 25%, 0 25%)';
       break;
     case 'downArrow':
-      element.style.clipPath =
-        'polygon(25% 0, 75% 0, 75% 75%, 100% 75%, 50% 100%, 0 75%, 25% 75%)';
+      element.style.clipPath = 'polygon(25% 0, 75% 0, 75% 75%, 100% 75%, 50% 100%, 0 75%, 25% 75%)';
       break;
     case 'pentagon':
       element.style.clipPath = 'polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%)';
@@ -754,7 +770,7 @@ export class NormalizedPresentationViewer {
   private metafileUrls = new Map<string, Promise<string | undefined>>();
   private listCleanup: (() => void) | undefined;
   private highlight: HTMLElement | undefined;
-  private pendingResources = new Set<Promise<void>>();
+  private activeMountResources: Set<Promise<void>> | undefined;
   private mountedHandles = new Set<DisposableHandle>();
   private handlesByTarget = new Map<HTMLElement, DisposableHandle>();
   private destroyed = false;
@@ -794,6 +810,14 @@ export class NormalizedPresentationViewer {
   private get naturalSlideHeight(): number {
     const height = this.presentation.size.heightEmu / EMU_PER_CSS_PIXEL;
     return Number.isFinite(height) && height > 0 ? height : 1;
+  }
+
+  private scaleForViewport(viewportWidth: number): number {
+    const fitScale =
+      this.fit === 'contain'
+        ? Math.min(1, (viewportWidth || this.naturalSlideWidth) / this.naturalSlideWidth)
+        : 1;
+    return fitScale * (this.zoom / 100);
   }
 
   private isRenderActive(generation: number): boolean {
@@ -857,15 +881,15 @@ export class NormalizedPresentationViewer {
   private applyAsset(assetId: string, apply: (url: string) => void, nodeId: string): void {
     const asset = this.presentation.assets[assetId];
     if (!asset) return;
+    const resources = this.activeMountResources;
     const pending = this.assetUrl(asset)
       .then((url) => {
         if (url && !this.destroyed) apply(url);
       })
       .catch((error: unknown) => {
         if (!this.destroyed) this.callbacks.onNodeError?.(nodeId, error);
-      })
-      .finally(() => this.pendingResources.delete(pending));
-    this.pendingResources.add(pending);
+      });
+    resources?.add(pending);
   }
 
   /**
@@ -1040,11 +1064,7 @@ export class NormalizedPresentationViewer {
       image.setAttribute('preserveAspectRatio', 'none');
       image.setAttribute('clip-path', `url(#${clipId})`);
       image.style.opacity = String(Math.max(0, Math.min(1, fillStyle.opacity ?? 1)));
-      this.applyAsset(
-        fillStyle.assetId,
-        (url) => image.setAttribute('href', url),
-        node.id,
-      );
+      this.applyAsset(fillStyle.assetId, (url) => image.setAttribute('href', url), node.id);
       svg.append(image);
     }
 
@@ -1448,6 +1468,7 @@ export class NormalizedPresentationViewer {
       element,
       target,
       ready: Promise.resolve(),
+      setScale: () => {},
       dispose: () => element.remove(),
     };
   }
@@ -1455,20 +1476,27 @@ export class NormalizedPresentationViewer {
   private mount(index: number, target: HTMLElement, scale?: number): DisposableHandle {
     if (this.destroyed) return this.emptyHandle(target);
     this.handlesByTarget.get(target)?.dispose();
-    const slide = this.createSlide(index);
-    const fitScale =
-      this.fit === 'contain'
-        ? Math.min(1, (target.clientWidth || this.naturalSlideWidth) / this.naturalSlideWidth)
-        : 1;
-    const effectiveScale = scale ?? fitScale * (this.zoom / 100);
+    const resources = new Set<Promise<void>>();
+    const previousResources = this.activeMountResources;
+    this.activeMountResources = resources;
+    let slide: HTMLElement;
+    try {
+      slide = this.createSlide(index);
+    } finally {
+      this.activeMountResources = previousResources;
+    }
+    const effectiveScale = scale ?? this.scaleForViewport(target.clientWidth);
     const wrapper = document.createElement('div');
     wrapper.dataset.rpvSlideWrapper = String(index);
     wrapper.style.position = 'relative';
-    wrapper.style.width = `${this.naturalSlideWidth * effectiveScale}px`;
-    wrapper.style.height = `${this.naturalSlideHeight * effectiveScale}px`;
     wrapper.style.margin = '0 auto';
     slide.style.transformOrigin = 'top left';
-    slide.style.transform = `scale(${effectiveScale})`;
+    const setScale = (nextScale: number): void => {
+      wrapper.style.width = `${this.naturalSlideWidth * nextScale}px`;
+      wrapper.style.height = `${this.naturalSlideHeight * nextScale}px`;
+      slide.style.transform = `scale(${nextScale})`;
+    };
+    setScale(effectiveScale);
     wrapper.append(slide);
     target.replaceChildren(wrapper);
     this.callbacks.onSlideRendered?.(index, slide);
@@ -1476,7 +1504,8 @@ export class NormalizedPresentationViewer {
     const handle: DisposableHandle = {
       element: slide,
       target,
-      ready: Promise.all([...this.pendingResources]).then(() => undefined),
+      ready: Promise.all([...resources]).then(() => undefined),
+      setScale,
       dispose: () => {
         if (disposed) return;
         disposed = true;
@@ -1504,6 +1533,35 @@ export class NormalizedPresentationViewer {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     } else {
       await Promise.resolve();
+    }
+  }
+
+  private async yieldNavigationPaint(): Promise<void> {
+    if (typeof requestAnimationFrame !== 'undefined') {
+      await new Promise<void>((resolve) => {
+        let settled = false;
+        let firstFrame: number | undefined;
+        let secondFrame: number | undefined;
+        const complete = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          if (typeof cancelAnimationFrame !== 'undefined') {
+            if (firstFrame !== undefined) cancelAnimationFrame(firstFrame);
+            if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+          }
+          resolve();
+        };
+        // Animation frames can be suspended in a hidden document. Preserve the
+        // foreground paint opportunity without leaving navigation unresolved.
+        const timeout = setTimeout(complete, 100);
+        firstFrame = requestAnimationFrame(() => {
+          if (settled) return;
+          secondFrame = requestAnimationFrame(complete);
+        });
+      });
+    } else {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   }
 
@@ -1552,13 +1610,14 @@ export class NormalizedPresentationViewer {
   ): ListPlaceholder {
     let handle: DisposableHandle | undefined;
     let mountPromise: Promise<void> | undefined;
+    let effectiveScale = scale;
     const isActive = () =>
       this.isRenderActive(generation) && this.listState?.generation === generation;
     const mount = (): Promise<void> => {
       if (!isActive()) return Promise.resolve();
       if (handle) return handle.ready;
       if (mountPromise) return mountPromise;
-      const nextHandle = this.mount(index, item, scale);
+      const nextHandle = this.mount(index, item, effectiveScale);
       handle = nextHandle;
       const pending = nextHandle.ready
         .then(() => {
@@ -1576,11 +1635,16 @@ export class NormalizedPresentationViewer {
     const unmount = (): void => {
       const mounted = handle;
       handle = undefined;
+      mountPromise = undefined;
       if (mounted) {
         mounted.dispose();
       }
     };
-    return { item, mount, unmount, isMounted: () => Boolean(handle) };
+    const setScale = (nextScale: number): void => {
+      effectiveScale = nextScale;
+      handle?.setScale(nextScale);
+    };
+    return { item, mount, unmount, isMounted: () => Boolean(handle), setScale };
   }
 
   async renderList(options: RenderListOptions = {}): Promise<void> {
@@ -1606,14 +1670,9 @@ export class NormalizedPresentationViewer {
       Math.min(this.slideCount - 1, options.initialSlideIndex ?? this.current),
     );
     const scroller = options.scrollElement ?? this.container;
-    const viewportWidth = scroller.clientWidth;
-    const estimatedFitScale =
-      this.fit === 'contain'
-        ? Math.min(1, (viewportWidth || this.naturalSlideWidth) / this.naturalSlideWidth)
-        : 1;
-    const effectiveScale = estimatedFitScale * (this.zoom / 100);
-    const slideHeight = this.naturalSlideHeight * effectiveScale;
-    const itemStride = slideHeight + LIST_ITEM_GAP;
+    let effectiveScale = this.scaleForViewport(scroller.clientWidth);
+    let slideHeight = this.naturalSlideHeight * effectiveScale;
+    let itemStride = slideHeight + LIST_ITEM_GAP;
 
     if (!windowingEnabled) {
       // Non-windowed continuous mode: every slide mounts in normal flow.
@@ -1623,9 +1682,42 @@ export class NormalizedPresentationViewer {
         item.style.minHeight = `${slideHeight}px`;
         item.style.margin = `0 auto ${LIST_ITEM_GAP}px`;
         this.container.append(item);
-        return this.createListPlaceholder(index, item, generation);
+        return this.createListPlaceholder(index, item, generation, effectiveScale);
       });
       const state: ActiveListState = { generation, options: normalizedOptions, placeholders };
+      state.updateScale = () => {
+        if (!this.isRenderActive(generation) || this.listState !== state) return;
+        const previousStride = itemStride;
+        const previousSlideHeight = slideHeight;
+        const listStart =
+          scroller === this.container
+            ? 0
+            : this.container.getBoundingClientRect().top -
+              scroller.getBoundingClientRect().top +
+              scroller.scrollTop;
+        const listOffset = scroller.scrollTop - listStart;
+        const anchorIndex = Math.max(
+          0,
+          Math.min(this.slideCount - 1, Math.floor(listOffset / previousStride)),
+        );
+        const anchorOffset = listOffset - anchorIndex * previousStride;
+        effectiveScale = this.scaleForViewport(scroller.clientWidth);
+        slideHeight = this.naturalSlideHeight * effectiveScale;
+        itemStride = slideHeight + LIST_ITEM_GAP;
+        placeholders.forEach((placeholder) => {
+          placeholder.item.style.minHeight = `${slideHeight}px`;
+          placeholder.setScale(effectiveScale);
+        });
+        // Resizing content that is entirely below an external viewport must
+        // not move that viewport toward or away from the list.
+        if (listOffset < 0) return;
+        const nextAnchorOffset = scaleListAnchorOffset(
+          anchorOffset,
+          previousSlideHeight,
+          slideHeight,
+        );
+        scroller.scrollTop = Math.max(0, listStart + anchorIndex * itemStride + nextAnchorOffset);
+      };
       this.listState = state;
       await this.mountInBatches(
         placeholders,
@@ -1676,6 +1768,20 @@ export class NormalizedPresentationViewer {
     const state: ActiveListState = { generation, options: normalizedOptions, placeholders };
     this.listState = state;
     const isActive = () => this.isRenderActive(generation) && this.listState === state;
+    const deferredMounts = new Map<number, number>();
+    let virtualWindow = new Set<number>();
+    state.deferMount = (index) => {
+      deferredMounts.set(index, (deferredMounts.get(index) ?? 0) + 1);
+    };
+    state.resumeMount = (index) => {
+      const remaining = (deferredMounts.get(index) ?? 0) - 1;
+      if (remaining > 0) {
+        deferredMounts.set(index, remaining);
+        return;
+      }
+      deferredMounts.delete(index);
+      if (virtualWindow.has(index)) void placeholders[index]?.mount();
+    };
 
     const measureViewportRect = () => {
       const rect = scroller.getBoundingClientRect();
@@ -1689,7 +1795,7 @@ export class NormalizedPresentationViewer {
     const requestedOverscan = options.overscanViewport ?? 1.5;
     const overscanViewports =
       Number.isFinite(requestedOverscan) && requestedOverscan >= 0 ? requestedOverscan : 1.5;
-    const overscan = Math.max(1, Math.ceil((overscanViewports * initialRect.height) / itemStride));
+    let overscan = Math.max(1, Math.ceil((overscanViewports * initialRect.height) / itemStride));
     // Content rendered above the slide list (inside the same scroller) offsets
     // every virtual position; re-measured whenever the layout settles.
     const measureScrollMargin = () =>
@@ -1700,12 +1806,21 @@ export class NormalizedPresentationViewer {
     // long as the user has not scrolled yet.
     let needsSettleAlignment = initialIndex > 0;
     let lastProgrammaticTop: number | undefined;
+    const writeScrollTop = (top: number, behavior?: ScrollBehavior): void => {
+      lastProgrammaticTop = top;
+      if (typeof scroller.scrollTo === 'function') {
+        scroller.scrollTo(behavior ? { top, behavior } : { top });
+      } else {
+        scroller.scrollTop = top;
+      }
+    };
 
     const reconcile = (instance: Virtualizer<HTMLElement, HTMLElement>): void => {
       if (!isActive()) return;
       const windowed = new Set(instance.getVirtualItems().map((item) => item.index));
+      virtualWindow = windowed;
       placeholders.forEach((placeholder, index) => {
-        if (windowed.has(index)) void placeholder.mount();
+        if (windowed.has(index) && !deferredMounts.has(index)) void placeholder.mount();
         else placeholder.unmount();
       });
       // Report the slide with the largest visible overlap, matching how
@@ -1775,12 +1890,7 @@ export class NormalizedPresentationViewer {
       },
       scrollToFn: (offset, { adjustments, behavior }) => {
         const top = offset + (adjustments ?? 0);
-        lastProgrammaticTop = top;
-        if (typeof scroller.scrollTo === 'function') {
-          scroller.scrollTo(behavior ? { top, behavior } : { top });
-        } else {
-          scroller.scrollTop = top;
-        }
+        writeScrollTop(top, behavior);
       },
       onChange: (instance) => reconcile(instance),
     });
@@ -1797,6 +1907,55 @@ export class NormalizedPresentationViewer {
                 : 'start',
         behavior: scrollOptions?.behavior === 'smooth' ? 'smooth' : 'auto',
       });
+    };
+    state.updateScale = () => {
+      if (!isActive()) return;
+      const previousStride = itemStride;
+      const previousSlideHeight = slideHeight;
+      const anchorIndex = this.current;
+      const observedScrollTop = virtualizer.scrollOffset ?? scroller.scrollTop;
+      const observedIndex = Math.floor((observedScrollTop - scrollMargin) / previousStride);
+      const intendedIndex =
+        lastProgrammaticTop === undefined
+          ? undefined
+          : Math.floor((lastProgrammaticTop - scrollMargin) / previousStride);
+      // A programmatic scroll can be followed immediately by zoom before the
+      // browser emits its scroll event. In that gap, TanStack still exposes
+      // the old offset even though the target shell has already been chosen.
+      const previousScrollTop =
+        Math.abs(observedIndex - anchorIndex) > 1 &&
+        intendedIndex !== undefined &&
+        Math.abs(intendedIndex - anchorIndex) <= 1
+          ? lastProgrammaticTop!
+          : observedScrollTop;
+      const previousOffset = previousScrollTop - scrollMargin;
+      const anchorOffset = previousOffset - anchorIndex * previousStride;
+
+      effectiveScale = this.scaleForViewport(scroller.clientWidth);
+      slideHeight = this.naturalSlideHeight * effectiveScale;
+      itemStride = slideHeight + LIST_ITEM_GAP;
+      sizer.style.height = `${this.slideCount * itemStride - LIST_ITEM_GAP}px`;
+      placeholders.forEach((placeholder, index) => {
+        placeholder.item.style.height = `${slideHeight}px`;
+        placeholder.item.style.transform = `translateY(${index * itemStride}px)`;
+        placeholder.setScale(effectiveScale);
+      });
+
+      const nextAnchorOffset = scaleListAnchorOffset(
+        anchorOffset,
+        previousSlideHeight,
+        slideHeight,
+      );
+      const nextScrollTop =
+        previousOffset < 0
+          ? previousScrollTop
+          : Math.max(0, scrollMargin + anchorIndex * itemStride + nextAnchorOffset);
+      const viewportRect = measureViewportRect();
+      overscan = Math.max(1, Math.ceil((overscanViewports * viewportRect.height) / itemStride));
+      virtualizer.scrollOffset = nextScrollTop;
+      writeScrollTop(nextScrollTop);
+      virtualizer.setOptions({ ...virtualizer.options, overscan });
+      virtualizer.measure();
     };
     const teardown = virtualizer._didMount();
     this.listCleanup = teardown;
@@ -1827,24 +1986,34 @@ export class NormalizedPresentationViewer {
     if (state && this.isRenderActive(state.generation)) {
       const navigation = ++this.navigationGeneration;
       const placeholder = state.placeholders[next];
-      await placeholder?.mount();
-      if (
-        this.destroyed ||
-        navigation !== this.navigationGeneration ||
-        !this.isRenderActive(state.generation) ||
-        this.listState !== state
-      ) {
-        return;
+      let mountDeferred = Boolean(state.deferMount && placeholder && !placeholder.isMounted());
+      if (mountDeferred) state.deferMount?.(next);
+      // Publish and move to the fixed target shell before constructing the
+      // potentially expensive slide DOM or awaiting its resources.
+      try {
+        if (changed) {
+          if (state.scrollToIndex) state.scrollToIndex(next, scrollOptions);
+          else placeholder?.item.scrollIntoView?.(scrollOptions);
+          this.current = next;
+          this.notifySlideChange(next);
+        }
+        if (mountDeferred) await this.yieldNavigationPaint();
+        if (
+          this.destroyed ||
+          navigation !== this.navigationGeneration ||
+          !this.isRenderActive(state.generation) ||
+          this.listState !== state
+        ) {
+          return;
+        }
+        if (mountDeferred) {
+          state.resumeMount?.(next);
+          mountDeferred = false;
+        }
+        await placeholder?.mount();
+      } finally {
+        if (mountDeferred) state.resumeMount?.(next);
       }
-      // Only move the viewport when navigation actually changes the slide;
-      // controlled hosts echo the visible slide back through goToSlide while
-      // the user scrolls, and re-scrolling to it would snap the viewport.
-      if (changed) {
-        if (state.scrollToIndex) state.scrollToIndex(next, scrollOptions);
-        else placeholder?.item.scrollIntoView?.(scrollOptions);
-      }
-      this.current = next;
-      if (changed) this.notifySlideChange(next);
       return;
     }
     if (!changed && this.container.querySelector(`[data-rpv-slide-index="${next}"]`)) return;
@@ -1856,15 +2025,33 @@ export class NormalizedPresentationViewer {
     if (this.zoom === next) return;
     this.zoom = next;
     if (this.renderState?.mode === 'continuous') {
-      await this.renderList({ ...this.renderState.options, initialSlideIndex: this.current });
-    } else if (this.renderState) await this.renderSlide(this.current);
+      const state = this.listState;
+      if (state && this.isRenderActive(state.generation) && state.updateScale) {
+        state.updateScale();
+      } else {
+        await this.renderList({ ...this.renderState.options, initialSlideIndex: this.current });
+      }
+    } else if (this.renderState) {
+      const handle = this.handlesByTarget.get(this.container);
+      if (handle) handle.setScale(this.scaleForViewport(this.container.clientWidth));
+      else await this.renderSlide(this.current);
+    }
   }
   async setFitMode(mode: FitMode): Promise<void> {
     if (this.fit === mode) return;
     this.fit = mode;
     if (this.renderState?.mode === 'continuous') {
-      await this.renderList({ ...this.renderState.options, initialSlideIndex: this.current });
-    } else if (this.renderState) await this.renderSlide(this.current);
+      const state = this.listState;
+      if (state && this.isRenderActive(state.generation) && state.updateScale) {
+        state.updateScale();
+      } else {
+        await this.renderList({ ...this.renderState.options, initialSlideIndex: this.current });
+      }
+    } else if (this.renderState) {
+      const handle = this.handlesByTarget.get(this.container);
+      if (handle) handle.setScale(this.scaleForViewport(this.container.clientWidth));
+      else await this.renderSlide(this.current);
+    }
   }
   searchText(query: string | RegExp, options?: ViewerSearchOptions): PresentationSearchResult[] {
     return searchDocument(this.presentation, query, options);
@@ -1960,7 +2147,7 @@ export class NormalizedPresentationViewer {
     this.objectUrls.clear();
     this.assetUrls.clear();
     this.metafileUrls.clear();
-    this.pendingResources.clear();
+    this.activeMountResources = undefined;
     for (const handle of [...this.mountedHandles]) handle.dispose();
     this.handlesByTarget.clear();
     this.renderState = undefined;

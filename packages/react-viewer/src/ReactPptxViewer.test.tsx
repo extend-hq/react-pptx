@@ -6,7 +6,11 @@ import { PptxFontManager } from './fonts';
 import { usePptxViewer } from './hooks';
 import { ReactPptxViewer } from './ReactPptxViewer';
 import { usePptxViewerThumbnails } from './thumbnails';
-import type { PptxSlideThumbnailRenderWindow, PptxSlideThumbnailResolution } from './types';
+import type {
+  PptxSlideThumbnailRenderWindow,
+  PptxSlideThumbnailResolution,
+  PptxViewerController,
+} from './types';
 
 const textShape: ShapeNode = {
   id: 'needle-shape',
@@ -125,6 +129,29 @@ function ThumbnailHarness({
           ))}
       </div>
     </>
+  );
+}
+
+function DirectThumbnailHarness({
+  controller,
+  prefetchSlideIndexes,
+}: {
+  controller: PptxViewerController;
+  prefetchSlideIndexes: readonly number[];
+}) {
+  const { thumbnails } = usePptxViewerThumbnails(controller, {
+    renderWindow: { prefetchSlideIndexes },
+  });
+  return (
+    <div data-testid="direct-thumbnail-statuses">
+      {thumbnails.map((thumbnail) => (
+        <span
+          key={thumbnail.slideIndex}
+          data-slide-index={thumbnail.slideIndex}
+          data-status={thumbnail.status}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -288,6 +315,158 @@ describe('ReactPptxViewer adapter lifecycle', () => {
       expect(mountedThumbnail?.getAttribute('data-status')).toBe('ready');
     });
     expect(onSlideRendered.mock.calls.filter(([index]) => index === 1)).toHaveLength(1);
+  });
+
+  it('preserves the caller priority order for detached thumbnail prefetch', async () => {
+    const source = documentModel('ordered-thumbnail-prefetch', 5);
+    const prefetched: number[] = [];
+
+    await act(async () =>
+      root.render(
+        <ThumbnailHarness
+          source={source}
+          mountedSlideIndexes={[]}
+          renderWindow={{ prefetchSlideIndexes: [3, 1, 4, 2] }}
+          onSlideRendered={(index, element) => {
+            if (!element.isConnected) prefetched.push(index);
+          }}
+        />,
+      ),
+    );
+
+    await waitFor(() => {
+      for (const index of [3, 1, 4, 2]) {
+        expect(
+          host
+            .querySelector(`[data-testid="thumbnail-statuses"] [data-slide-index="${index}"]`)
+            ?.getAttribute('data-status'),
+        ).toBe('ready');
+      }
+    });
+    expect(prefetched).toEqual([3, 1, 4, 2]);
+  });
+
+  it('deduplicates retained prefetches and idles cancelled in-flight work', async () => {
+    const source = documentModel('in-flight-thumbnail-prefetch', 4);
+    const pending = new Map<
+      number,
+      { cleanup: () => void; resolve: (cleanup: () => void) => void }
+    >();
+    const renderThumbnail = vi.fn(
+      (index: number) =>
+        new Promise<() => void>((resolve) => {
+          pending.set(index, { cleanup: vi.fn(), resolve });
+        }),
+    );
+    const controller = {
+      goToSlide: vi.fn(async () => {}),
+      next: vi.fn(async () => {}),
+      previous: vi.fn(async () => {}),
+      setZoom: vi.fn(async () => {}),
+      setFitMode: vi.fn(async () => {}),
+      search: vi.fn(() => []),
+      highlightSearchResult: vi.fn(async () => {}),
+      clearSearchHighlights: vi.fn(),
+      isReady: () => true,
+      renderThumbnail,
+      getDocument: () => source,
+      getSlideIndex: () => 0,
+      getZoom: () => 100,
+    } satisfies PptxViewerController;
+    const render = (prefetchSlideIndexes: readonly number[]) => (
+      <DirectThumbnailHarness controller={controller} prefetchSlideIndexes={prefetchSlideIndexes} />
+    );
+
+    await act(async () => root.render(render([2])));
+    await waitFor(() => expect(renderThumbnail).toHaveBeenCalledTimes(1));
+    expect(renderThumbnail).toHaveBeenLastCalledWith(2, expect.any(HTMLElement), {
+      width: 160,
+    });
+
+    await act(async () => root.render(render([2, 3])));
+    await flushEffects();
+    expect(renderThumbnail.mock.calls.map(([index]) => index)).toEqual([2]);
+
+    await act(async () => {
+      const request = pending.get(2)!;
+      request.resolve(request.cleanup);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(renderThumbnail.mock.calls.map(([index]) => index)).toEqual([2, 3]));
+
+    await act(async () => root.render(render([])));
+    await waitFor(() => {
+      expect(
+        host
+          .querySelector('[data-testid="direct-thumbnail-statuses"] [data-slide-index="3"]')
+          ?.getAttribute('data-status'),
+      ).toBe('idle');
+    });
+    await act(async () => {
+      const request = pending.get(3)!;
+      request.resolve(request.cleanup);
+      await Promise.resolve();
+    });
+    expect(pending.get(3)!.cleanup).toHaveBeenCalledOnce();
+    expect(
+      host
+        .querySelector('[data-testid="direct-thumbnail-statuses"] [data-slide-index="3"]')
+        ?.getAttribute('data-status'),
+    ).toBe('idle');
+  });
+
+  it('starts replacement-controller prefetch without waiting for stale work', async () => {
+    const source = documentModel('replacement-thumbnail-prefetch', 3);
+    let resolveStale: ((cleanup: () => void) => void) | undefined;
+    const staleCleanup = vi.fn();
+    const staleRender = vi.fn(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveStale = resolve;
+        }),
+    );
+    const replacementCleanup = vi.fn();
+    const replacementRender = vi.fn(async () => replacementCleanup);
+    const controller = (renderThumbnail: PptxViewerController['renderThumbnail']) =>
+      ({
+        goToSlide: vi.fn(async () => {}),
+        next: vi.fn(async () => {}),
+        previous: vi.fn(async () => {}),
+        setZoom: vi.fn(async () => {}),
+        setFitMode: vi.fn(async () => {}),
+        search: vi.fn(() => []),
+        highlightSearchResult: vi.fn(async () => {}),
+        clearSearchHighlights: vi.fn(),
+        isReady: () => true,
+        renderThumbnail,
+        getDocument: () => source,
+        getSlideIndex: () => 0,
+        getZoom: () => 100,
+      }) satisfies PptxViewerController;
+
+    await act(async () =>
+      root.render(
+        <DirectThumbnailHarness controller={controller(staleRender)} prefetchSlideIndexes={[1]} />,
+      ),
+    );
+    await waitFor(() => expect(staleRender).toHaveBeenCalledOnce());
+
+    await act(async () =>
+      root.render(
+        <DirectThumbnailHarness
+          controller={controller(replacementRender)}
+          prefetchSlideIndexes={[1]}
+        />,
+      ),
+    );
+    await waitFor(() => expect(replacementRender).toHaveBeenCalledOnce());
+    expect(staleRender).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveStale?.(staleCleanup);
+      await Promise.resolve();
+    });
+    expect(staleCleanup).toHaveBeenCalledOnce();
   });
 
   it('does not publish a stale adapter after its font preparation resolves', async () => {

@@ -247,8 +247,7 @@ describe('normalized viewer safety and fidelity', () => {
       HTMLAnchorElement,
     );
     expect(
-      container.querySelector<HTMLElement>('[data-rpv-node-id="safe-node"]')!.style
-        .textDecoration,
+      container.querySelector<HTMLElement>('[data-rpv-node-id="safe-node"]')!.style.textDecoration,
     ).toBe('none');
     expect(container.querySelector('[data-rpv-node-id="unsafe-node"]')).not.toBeInstanceOf(
       HTMLAnchorElement,
@@ -323,9 +322,7 @@ describe('normalized viewer safety and fidelity', () => {
         .color,
     ).toBe('');
     expect(
-      container
-        .querySelector('rect[data-xlsx-chart-series-index]')
-        ?.getAttribute('fill'),
+      container.querySelector('rect[data-xlsx-chart-series-index]')?.getAttribute('fill'),
     ).toBe('#4472c4');
     expect(container.innerHTML).not.toMatch(/attacker|javascript:bad|evil\.example/i);
     viewer.destroy();
@@ -579,8 +576,7 @@ describe('normalized viewer safety and fidelity', () => {
     expect(connectorPath.style.fill).toBe('none');
     expect(connectorPath.style.stroke).toMatch(/#ffffff|rgb\(255, 255, 255\)/i);
     expect(
-      container.querySelector<HTMLElement>('[data-rpv-node-id="straight-connector"]')!.style
-        .border,
+      container.querySelector<HTMLElement>('[data-rpv-node-id="straight-connector"]')!.style.border,
     ).toBe('');
     const verticalConnector = container.querySelector<SVGSVGElement>(
       '[data-rpv-node-id="vertical-connector"] [data-rpv-custom-geometry]',
@@ -602,25 +598,22 @@ describe('normalized viewer safety and fidelity', () => {
       }),
     );
     const container = document.createElement('div');
-    const viewer = new NormalizedPresentationViewer(
-      container,
-      presentationWithSlides(1, arrows),
-    );
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(1, arrows));
 
     await viewer.renderSlide(0);
 
-    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-0"]')?.style.clipPath).toBe(
-      'polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)',
-    );
-    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-1"]')?.style.clipPath).toContain(
-      'polygon(',
-    );
-    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-2"]')?.style.clipPath).toContain(
-      'polygon(',
-    );
-    expect(container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-3"]')?.style.clipPath).toContain(
-      'polygon(',
-    );
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-0"]')?.style.clipPath,
+    ).toBe('polygon(0 25%, 75% 25%, 75% 0, 100% 50%, 75% 100%, 75% 75%, 0 75%)');
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-1"]')?.style.clipPath,
+    ).toContain('polygon(');
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-2"]')?.style.clipPath,
+    ).toContain('polygon(');
+    expect(
+      container.querySelector<HTMLElement>('[data-rpv-node-id="arrow-3"]')?.style.clipPath,
+    ).toContain('polygon(');
     viewer.destroy();
   });
 
@@ -720,7 +713,8 @@ describe('normalized viewer safety and fidelity', () => {
 
     await viewer.renderSlide(0);
 
-    const chartMarkup = container.querySelector('[data-rpv-node-id="sparse-chart"]')?.innerHTML ?? '';
+    const chartMarkup =
+      container.querySelector('[data-rpv-node-id="sparse-chart"]')?.innerHTML ?? '';
     expect(chartMarkup.length).toBeGreaterThan(0);
     expect(chartMarkup).not.toContain('NaN');
     expect(chartMarkup).not.toContain('Infinity');
@@ -848,9 +842,9 @@ describe('normalized viewer safety and fidelity', () => {
     expect(duotone.style.filter).toMatch(/^url\("?#rpv-duotone-\d+"?\)$/);
     const filterId = duotone.style.filter.match(/#(rpv-duotone-\d+)/)?.[1];
     const filterElement = container.querySelector(`#${filterId}`)!;
-    expect(filterElement.querySelector('feComponentTransfer feFuncB')?.getAttribute('tableValues')).toBe(
-      `0 ${196 / 255}`,
-    );
+    expect(
+      filterElement.querySelector('feComponentTransfer feFuncB')?.getAttribute('tableValues'),
+    ).toBe(`0 ${196 / 255}`);
 
     const gray = container.querySelector<HTMLImageElement>('[data-rpv-node-id="gray-image"] img')!;
     expect(gray.style.filter).toBe('grayscale(1) brightness(1.2) contrast(0.9)');
@@ -1012,6 +1006,219 @@ describe('normalized viewer generations and windowing', () => {
     expect(viewer.currentSlideIndex).toBe(2);
     viewer.destroy();
     container.remove();
+  });
+
+  it('updates windowed slide geometry in place when zoom changes', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const rendered: number[] = [];
+    const unmounted: number[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(8), {
+      onSlideRendered: (index) => rendered.push(index),
+      onSlideUnmounted: (index) => unmounted.push(index),
+    });
+
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
+    const sizer = container.querySelector<HTMLElement>('[data-rpv-virtual-sizer]')!;
+    const items = [...container.querySelectorAll<HTMLElement>('[data-rpv-list-item]')];
+    const firstWrapper = items[0]!.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    const firstSlide = firstWrapper.querySelector<HTMLElement>('[data-rpv-slide-index="0"]')!;
+    const initialRendered = [...rendered];
+
+    await viewer.setZoom(200);
+
+    expect(container.querySelector('[data-rpv-virtual-sizer]')).toBe(sizer);
+    expect(items[0]!.querySelector('[data-rpv-slide-wrapper]')).toBe(firstWrapper);
+    expect(firstWrapper.querySelector('[data-rpv-slide-index="0"]')).toBe(firstSlide);
+    expect(firstWrapper.style.width).toBe('1920px');
+    expect(firstWrapper.style.height).toBe('1440px');
+    expect(firstSlide.style.transform).toBe('scale(2)');
+    expect(items[0]!.style.height).toBe('1440px');
+    expect(items[1]!.style.transform).toBe('translateY(1464px)');
+    expect(sizer.style.height).toBe(`${8 * 1464 - 24}px`);
+    expect(rendered).toEqual(initialRendered);
+    expect(unmounted).toEqual([]);
+
+    container.scrollTop = 6 * 1464;
+    container.dispatchEvent(new Event('scroll'));
+    await Promise.resolve();
+    const futureWrapper = items[6]!.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    expect(futureWrapper.style.width).toBe('1920px');
+    expect(futureWrapper.style.height).toBe('1440px');
+    viewer.destroy();
+    container.remove();
+  });
+
+  it('keeps an immediate programmatic navigation target anchored while zooming', async () => {
+    const container = document.createElement('div');
+    Object.defineProperty(container, 'clientHeight', { configurable: true, value: 600 });
+    Object.defineProperty(container, 'scrollHeight', {
+      configurable: true,
+      get: () =>
+        Number.parseFloat(
+          container.querySelector<HTMLElement>('[data-rpv-virtual-sizer]')?.style.height ?? '0',
+        ),
+    });
+    document.body.append(container);
+    const scrollTo = vi.fn();
+    container.scrollTo = scrollTo as unknown as typeof container.scrollTo;
+    const changes: number[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(8), {
+      onSlideChange: (index) => changes.push(index),
+    });
+
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
+    await viewer.goToSlide(6);
+    const target = container.querySelector<HTMLElement>('[data-rpv-list-item="6"]')!;
+    const targetWrapper = target.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    scrollTo.mockClear();
+
+    // No synthetic scroll event: this covers zoom arriving before the browser
+    // has reported the programmatic navigation offset back to the virtualizer.
+    await viewer.setZoom(200);
+
+    expect(viewer.currentSlideIndex).toBe(6);
+    expect(changes).toEqual([0, 6]);
+    expect(target.querySelector('[data-rpv-slide-wrapper]')).toBe(targetWrapper);
+    expect(targetWrapper.style.width).toBe('1920px');
+    expect(scrollTo).toHaveBeenLastCalledWith({ top: 6 * 1464 });
+    viewer.destroy();
+    container.remove();
+  });
+
+  it('preserves the reading position within the current slide while zooming', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const changes: number[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(8), {
+      onSlideChange: (index) => changes.push(index),
+    });
+
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
+    container.scrollTop = 4 * 744 + 180;
+    container.dispatchEvent(new Event('scroll'));
+    await Promise.resolve();
+    expect(viewer.currentSlideIndex).toBe(4);
+    const target = container.querySelector<HTMLElement>('[data-rpv-list-item="4"]')!;
+    const targetWrapper = target.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+
+    await viewer.setZoom(200);
+
+    expect(viewer.currentSlideIndex).toBe(4);
+    expect(changes).toEqual([0, 4]);
+    expect(container.scrollTop).toBe(4 * 1464 + 360);
+    expect(target.querySelector('[data-rpv-slide-wrapper]')).toBe(targetWrapper);
+    expect(targetWrapper.style.width).toBe('1920px');
+    viewer.destroy();
+    container.remove();
+  });
+
+  it('keeps an external viewport fixed when the slide list starts below it', async () => {
+    for (const enabled of [true, false]) {
+      const scroller = document.createElement('div');
+      const container = document.createElement('div');
+      scroller.append(container);
+      document.body.append(scroller);
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 },
+        clientWidth: { configurable: true, value: 960 },
+      });
+      scroller.scrollTop = 300;
+      scroller.getBoundingClientRect = () =>
+        ({ top: 0, left: 0, right: 960, bottom: 600, width: 960, height: 600 }) as DOMRect;
+      container.getBoundingClientRect = () =>
+        ({ top: 200, left: 0, right: 960, bottom: 200, width: 960, height: 0 }) as DOMRect;
+      const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(4));
+
+      await viewer.renderList({ enabled, scrollElement: scroller });
+      expect(scroller.scrollTop).toBe(300);
+
+      await viewer.setZoom(200);
+
+      expect(scroller.scrollTop).toBe(300);
+      viewer.destroy();
+      scroller.remove();
+    }
+  });
+
+  it('finishes deferred navigation when animation frames are suspended', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(5));
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
+    const target = container.querySelector<HTMLElement>('[data-rpv-list-item="4"]')!;
+    expect(target.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
+
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation(() => 42);
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+    try {
+      const navigation = viewer.goToSlide(4);
+
+      expect(target.querySelector('[data-rpv-slide-wrapper]')).toBeNull();
+      await navigation;
+
+      expect(target.querySelector('[data-rpv-slide-wrapper]')).not.toBeNull();
+      expect(requestFrame).toHaveBeenCalled();
+      expect(cancelFrame).toHaveBeenCalledWith(42);
+    } finally {
+      requestFrame.mockRestore();
+      cancelFrame.mockRestore();
+      viewer.destroy();
+      container.remove();
+    }
+  });
+
+  it('updates a single mounted slide in place for zoom and fit changes', async () => {
+    const container = document.createElement('div');
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 480 });
+    const rendered: number[] = [];
+    const unmounted: number[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentation, {
+      onSlideRendered: (index) => rendered.push(index),
+      onSlideUnmounted: (index) => unmounted.push(index),
+    });
+
+    await viewer.renderSlide(0);
+    const wrapper = container.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    const slide = container.querySelector<HTMLElement>('[data-rpv-slide-index="0"]')!;
+    expect(wrapper.style.width).toBe('480px');
+
+    await viewer.setZoom(200);
+    expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
+    expect(container.querySelector('[data-rpv-slide-index="0"]')).toBe(slide);
+    expect(wrapper.style.width).toBe('960px');
+    expect(slide.style.transform).toBe('scale(1)');
+
+    await viewer.setFitMode('none');
+    expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
+    expect(wrapper.style.width).toBe('1920px');
+    expect(slide.style.transform).toBe('scale(2)');
+    expect(rendered).toEqual([0]);
+    expect(unmounted).toEqual([]);
+    viewer.destroy();
+  });
+
+  it('anchors non-windowed zoom from the actual scroll position', async () => {
+    const container = document.createElement('div');
+    const rendered: number[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(6), {
+      onSlideRendered: (index) => rendered.push(index),
+    });
+
+    await viewer.renderList({ enabled: false });
+    const fifthItem = container.querySelector<HTMLElement>('[data-rpv-list-item="4"]')!;
+    const fifthWrapper = fifthItem.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    const initialRendered = [...rendered];
+    // Non-windowed lists do not use the virtualizer's current-slide tracker.
+    container.scrollTop = 4 * 744 + 180;
+
+    await viewer.setZoom(200);
+
+    expect(container.scrollTop).toBe(4 * 1464 + 360);
+    expect(fifthItem.querySelector('[data-rpv-slide-wrapper]')).toBe(fifthWrapper);
+    expect(fifthWrapper.style.width).toBe('1920px');
+    expect(rendered).toEqual(initialRendered);
+    viewer.destroy();
   });
 
   it('mounts and scopes highlights to the result slide as a visible sibling overlay', async () => {
