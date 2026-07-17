@@ -3,8 +3,6 @@ name: Publish Packages
 on:
   push:
     branches: [main]
-    paths:
-      - packages/react-viewer/package.json
   workflow_dispatch:
 
 permissions:
@@ -20,11 +18,9 @@ jobs:
     timeout-minutes: 35
     outputs:
       dist_tag: ${{ steps.meta.outputs.dist_tag }}
-      git_head: ${{ steps.npm_state.outputs.git_head }}
       name: ${{ steps.meta.outputs.name }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
       published: ${{ steps.npm_state.outputs.published }}
-      release_commit: ${{ steps.npm_state.outputs.release_commit }}
       tag: ${{ steps.meta.outputs.tag }}
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -102,7 +98,6 @@ jobs:
             throw new Error(`npm registry did not return tarball integrity for ${name}@${version}`);
           }
 
-          let releaseCommit = '';
           if (!manifest.gitHead) {
             const releases = JSON.parse(
               readFileSync('.github/release-bootstrap.json', 'utf8'),
@@ -118,18 +113,19 @@ jobs:
               if (!/^[0-9a-f]{40}$/.test(release.commit)) {
                 throw new Error(`bootstrap record has an invalid commit for ${name}@${version}`);
               }
-              releaseCommit = release.commit;
             }
           }
 
           console.log('published=true');
-          console.log(`git_head=${manifest.gitHead ?? ''}`);
-          console.log(`release_commit=${releaseCommit}`);
           console.error(`${name}@${version} already exists on npm.`);
           NODE
         env:
           PACKAGE_NAME: ${{ steps.meta.outputs.name }}
           PACKAGE_VERSION: ${{ steps.meta.outputs.version }}
+
+      - name: Stop when this version is already on npm
+        if: steps.npm_state.outputs.published == 'true'
+        run: echo "${{ steps.meta.outputs.name }}@${{ steps.meta.outputs.version }} already exists on npm; skipping publish."
 
       - name: Install dependencies
         if: steps.npm_state.outputs.published != 'true'
@@ -185,7 +181,9 @@ jobs:
 
   publish:
     needs: prepare
-    if: needs.prepare.result == 'success'
+    if: >-
+      needs.prepare.result == 'success' &&
+      needs.prepare.outputs.published != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -211,31 +209,8 @@ jobs:
 
       - name: Resolve the release commit
         id: release
-        env:
-          BOOTSTRAP_RELEASE_COMMIT: ${{ needs.prepare.outputs.release_commit }}
-          PUBLISHED_GIT_HEAD: ${{ needs.prepare.outputs.git_head }}
         run: |
-          if [ "${{ needs.prepare.outputs.published }}" = "true" ]; then
-            RELEASE_COMMIT="$PUBLISHED_GIT_HEAD"
-            if [ -z "$RELEASE_COMMIT" ] || [ "$RELEASE_COMMIT" = "null" ]; then
-              RELEASE_COMMIT="$BOOTSTRAP_RELEASE_COMMIT"
-            fi
-            if [ -z "$RELEASE_COMMIT" ]; then
-              echo "The existing npm version exposes no gitHead and has no matching bootstrap record; refusing to create a possibly incorrect tag." >&2
-              exit 1
-            fi
-            if ! git cat-file -e "$RELEASE_COMMIT^{commit}" 2> /dev/null; then
-              echo "The release commit $RELEASE_COMMIT is not a commit in this repository." >&2
-              exit 1
-            fi
-            if ! git merge-base --is-ancestor "$RELEASE_COMMIT" HEAD; then
-              echo "The release commit $RELEASE_COMMIT is not on the validated main history." >&2
-              exit 1
-            fi
-            echo "commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
-          else
-            echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          fi
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Verify release tag availability
         env:
@@ -251,16 +226,13 @@ jobs:
           fi
 
       - name: Download the verified release tarball
-        if: needs.prepare.outputs.published != 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: react-pptx-${{ github.sha }}
           path: /tmp
 
       - name: Verify npm supports Trusted Publishing
-        if: >-
-          needs.prepare.outputs.published != 'true' &&
-          env.USE_NPM_TOKEN != 'true'
+        if: env.USE_NPM_TOKEN != 'true'
         run: |
           node <<'NODE'
           const { execFileSync } = require('node:child_process');
@@ -276,9 +248,7 @@ jobs:
           NODE
 
       - name: Validate first-release npm token
-        if: >-
-          needs.prepare.outputs.published != 'true' &&
-          env.USE_NPM_TOKEN == 'true'
+        if: env.USE_NPM_TOKEN == 'true'
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -288,17 +258,13 @@ jobs:
           fi
 
       - name: Publish with first-release npm token
-        if: >-
-          needs.prepare.outputs.published != 'true' &&
-          env.USE_NPM_TOKEN == 'true'
+        if: env.USE_NPM_TOKEN == 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish "$PACKAGE_TARBALL" --access public --provenance --tag "${{ needs.prepare.outputs.dist_tag }}"
 
       - name: Publish with npm Trusted Publishing
-        if: >-
-          needs.prepare.outputs.published != 'true' &&
-          env.USE_NPM_TOKEN != 'true'
+        if: env.USE_NPM_TOKEN != 'true'
         run: npm publish "$PACKAGE_TARBALL" --access public --provenance --tag "${{ needs.prepare.outputs.dist_tag }}"
 
       - name: Create the GitHub release and tag

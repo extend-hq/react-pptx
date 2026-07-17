@@ -23,17 +23,18 @@ package so consumers do not need internal workspace packages or repository patch
 
 3. Commit and merge the version changes to `main`.
 
-Changing `packages/react-viewer/package.json` on `main` directly triggers
-`.github/workflows/publish.yml`. The release workflow checks whether that exact version already
-exists on npm. If it is new, an unprivileged job builds, typechecks, and verifies one tarball,
-stamps it with the release commit, then a minimal privileged job publishes those exact bytes,
-pushes a matching
-`v<version>` Git tag, and creates a GitHub release. A prerelease such as `0.2.0-beta.0` is
-published under the matching `beta` npm dist-tag.
+Every push to `main` triggers `.github/workflows/publish.yml`. Like the `react-docx` release
+workflow, it reads the current public package version and checks whether that exact version
+already exists on npm. Existing versions stop after the check, without installing dependencies,
+building, publishing, or entering the privileged release job. If the version is new, an
+unprivileged job builds, typechecks, and verifies one tarball, stamps it with the release commit,
+then a minimal privileged job publishes those exact bytes, pushes a matching `v<version>` Git
+tag, and creates a GitHub release. A prerelease such as `0.2.0-beta.0` is published under the
+matching `beta` npm dist-tag.
 
 Do not create the Git tag manually. A tag is created only after npm publishing succeeds.
 The workflow can also be started manually with `workflow_dispatch`; an already-published version
-is verified and skipped rather than published again.
+is verified and the complete publish/release path is skipped.
 
 ## npm Trusted Publishing
 
@@ -80,9 +81,9 @@ bootstrap is one publish from an authenticated npm CLI on the clean release comm
    through `CI`. This exception is hash-pinned and is only for a manual first publish.
 5. Configure the npm Trusted Publisher using the values above.
 6. Leave `NPM_PUBLISH_USE_TOKEN` unset or `false`.
-7. Manually run `Publish Packages` on `main`. The publish workflow recognizes the existing npm version,
-   verifies its `gitHead` or hash-pinned bootstrap record, creates the matching Git tag,
-   and creates the GitHub release without republishing the package.
+7. Because the automated workflow skips every already-published version, create the matching Git
+   tag and GitHub release from the verified bootstrap commit manually. Subsequent new versions use
+   the normal automated flow above.
 
 If an authenticated local publish is not available, the workflow also supports a one-time token
 bootstrap:
