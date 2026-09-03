@@ -14,6 +14,22 @@ export interface ParsedPresentation {
   readonly warnings: readonly PresentationWarning[];
 }
 
+export type PptxPerformancePhase =
+  | 'download'
+  | 'wasm-parsing'
+  | 'embedded-font-preparation'
+  | 'slide-dom-svg-rendering'
+  | 'image-decoding'
+  | 'raster-encoding';
+
+export interface PptxPerformanceMeasurement {
+  /** Wall-clock duration for this phase. */
+  durationMs: number;
+  phase: PptxPerformancePhase;
+  /** Present for work attributable to one slide. */
+  slideIndex?: number;
+}
+
 export type PresentationSource =
   BinaryPresentationSource | PresentationDocument | ParsedPresentation;
 
@@ -25,6 +41,8 @@ export interface ParsePresentationOptions {
   formatHint?: PresentationFormat;
   maxInputBytes?: number;
   fetchInit?: Omit<RequestInit, 'signal'>;
+  /** Receives cold-start download and native parsing timings. */
+  onPerformanceMeasurement?: (measurement: PptxPerformanceMeasurement) => void;
 }
 
 export interface VirtualizationOptions {
@@ -119,6 +137,67 @@ export type PptxSlideThumbnailResolution =
 export interface PptxSlideThumbnailRenderOptions {
   /** Rendered thumbnail width in CSS pixels. */
   width?: number;
+}
+
+export type PptxThumbnailOutput = 'blob' | 'canvas' | 'imageBitmap' | 'svg';
+
+export interface PptxThumbnailRendererOptions {
+  /**
+   * Thumbnail-specific font policy. Defaults to skipping embedded fonts and
+   * not waiting for the global font set.
+   */
+  fonts?: PptxFontOptions;
+  /** Maximum number of slide renders executing at once. Default `2`. */
+  concurrency?: number;
+  onPerformanceMeasurement?: (measurement: PptxPerformanceMeasurement) => void;
+  onWarning?: (warning: PresentationWarning) => void;
+}
+
+export interface PptxThumbnailRenderOptions {
+  maxHeight?: number;
+  maxWidth?: number;
+  /** Output pixel density. Default `1`. */
+  pixelRatio?: number;
+  output?: PptxThumbnailOutput;
+  /** PNG encoding quality where supported. */
+  quality?: number;
+  signal?: AbortSignal;
+}
+
+export interface PptxThumbnailRenderResult<T> {
+  data: T;
+  height: number;
+  measurements: readonly PptxPerformanceMeasurement[];
+  output: PptxThumbnailOutput;
+  slideIndex: number;
+  width: number;
+}
+
+export interface PptxThumbnailRenderer {
+  readonly presentation: ParsedPresentation;
+  readonly ready: Promise<void>;
+  renderSlide(
+    slideIndex: number,
+    options: PptxThumbnailRenderOptions & { output: 'canvas' },
+  ): Promise<PptxThumbnailRenderResult<HTMLCanvasElement>>;
+  renderSlide(
+    slideIndex: number,
+    options: PptxThumbnailRenderOptions & { output: 'imageBitmap' },
+  ): Promise<PptxThumbnailRenderResult<ImageBitmap>>;
+  renderSlide(
+    slideIndex: number,
+    options: PptxThumbnailRenderOptions & { output: 'svg' },
+  ): Promise<PptxThumbnailRenderResult<string>>;
+  renderSlide(
+    slideIndex: number,
+    options?: PptxThumbnailRenderOptions & { output?: 'blob' },
+  ): Promise<PptxThumbnailRenderResult<Blob>>;
+  /** Renders exactly the supplied indexes, preserving their order. */
+  renderSlides(
+    slideIndexes: readonly number[],
+    options?: PptxThumbnailRenderOptions,
+  ): Promise<PptxThumbnailRenderResult<Blob | HTMLCanvasElement | ImageBitmap | string>[]>;
+  destroy(): void;
 }
 
 export interface PptxSlideThumbnailRenderWindow {
@@ -253,6 +332,8 @@ export interface ReactPptxViewerProps extends Omit<
   onSlideUnmounted?: (index: number) => void;
   onSearchResults?: (results: readonly PresentationSearchResult[]) => void;
   onThumbnailRendered?: (index: number, element: HTMLElement) => void;
+  /** Receives parsing, font preparation, and rendering timings. */
+  onPerformanceMeasurement?: (measurement: PptxPerformanceMeasurement) => void;
   /** Supplies the internal slide surface to host integrations and test harnesses. */
   onViewportReady?: (element: HTMLDivElement) => void;
   ref?: Ref<PptxViewerController>;

@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Add a cold-start `createPptxThumbnailRenderer` API with package-owned PNG, canvas, ImageBitmap,
+  and SVG outputs, explicit thumbnail font policy, cancellation, bounded concurrency, shared
+  presentation assets, and phase-level performance measurements.
 - Make slide navigation observable before off-window rendering completes, isolate resource
   readiness per slide mount, update zoom and fit geometry without rebuilding mounted slide DOM,
   and reduce thumbnail work outside the visible rail.

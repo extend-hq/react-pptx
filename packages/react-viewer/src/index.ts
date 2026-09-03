@@ -7,6 +7,7 @@ export type { WasmSource, WorkerWasmSource } from './wasm';
 export { PptxViewerError } from './errors';
 export { usePptxModel, usePptxPresentation, usePptxViewer } from './hooks';
 export { usePptxViewerThumbnails } from './thumbnails';
+export { createPptxThumbnailRenderer } from './thumbnail-renderer';
 export { OFFICE_FONT_FALLBACKS, resolvePptxFontFamily } from './fonts';
 export type * from './types';
 export type { UsePptxPresentationState, UsePptxViewerResult } from './hooks';

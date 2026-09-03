@@ -150,6 +150,49 @@ return (
 `usePptxViewer` exposes the reactive navigation/search/zoom controller. `onViewportReady`
 provides the internal slide surface for advanced integrations and test harnesses.
 
+## Cold-start thumbnails
+
+`createPptxThumbnailRenderer` renders directly from a `ParsedPresentation`; it does not mount or
+initialize `ReactPptxViewer`. One renderer reuses its font manager, DOM/SVG rendering context, and
+presentation asset cache across slide requests. The parsed presentation can later be passed to
+`ReactPptxViewer` without fetching or parsing it again.
+
+```ts
+import { createPptxThumbnailRenderer, parsePresentation } from '@extend-ai/react-pptx';
+
+const presentation = await parsePresentation(source, {
+  onPerformanceMeasurement: recordMeasurement,
+});
+const renderer = createPptxThumbnailRenderer(presentation, {
+  fonts: {
+    loadEmbeddedFonts: false,
+    waitForFonts: false,
+  },
+  concurrency: 2,
+  onPerformanceMeasurement: recordMeasurement,
+});
+
+const thumbnail = await renderer.renderSlide(0, {
+  maxWidth: 240,
+  maxHeight: 135,
+  output: 'blob',
+  signal: abortController.signal,
+});
+
+image.src = URL.createObjectURL(thumbnail.data);
+renderer.destroy();
+```
+
+The output can be `blob` (PNG, the default), `canvas`, `imageBitmap`, or `svg`. `renderSlides()`
+accepts an explicit index list, preserves its order, and never initializes other slides. Both
+single and batch requests use the renderer's bounded queue. By default, the thumbnail-specific
+font policy skips embedded fonts, global font readiness, and missing-font probing; callers can opt
+back into any of those behaviors through `fonts`.
+
+Performance observers receive `download`, `wasm-parsing`, `embedded-font-preparation`,
+`slide-dom-svg-rendering`, `image-decoding`, and `raster-encoding` measurements as applicable. Each
+render result also contains its slide-specific measurements.
+
 ## Thumbnail hook
 
 `usePptxViewerThumbnails` exposes detached slide previews for a consumer-owned filmstrip. PPTX

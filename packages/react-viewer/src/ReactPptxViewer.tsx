@@ -14,6 +14,7 @@ import { PptxViewerError, toPptxViewerError } from './errors';
 import { PptxFontManager } from './fonts';
 import { NormalizedPresentationViewer } from './normalized-viewer';
 import { parsePresentation } from './parse';
+import { performanceMeasurement, performanceNow } from './performance';
 import type {
   FitMode,
   ParsedPresentation,
@@ -119,7 +120,11 @@ async function createAdapter(
   const fontManager = new PptxFontManager(props.fonts, (warning) => {
     if (isCurrent()) reportWarning(warning);
   });
+  const fontStartedAt = performanceNow();
   await fontManager.prepare(parsed.document);
+  getCurrentProps().onPerformanceMeasurement?.(
+    performanceMeasurement('embedded-font-preparation', fontStartedAt),
+  );
   if (!isCurrent()) {
     fontManager.destroy();
     throw new Error('Viewer adapter creation was superseded.');
@@ -155,6 +160,7 @@ async function createAdapter(
   const normalized = new NormalizedPresentationViewer(target, parsed.document, callbacks);
   return {
     async render(mode, slideIndex) {
+      const startedAt = performanceNow();
       if (mode === 'continuous') {
         const virtualization = typeof props.virtualization === 'object' ? props.virtualization : {};
         await normalized.renderList({
@@ -168,6 +174,9 @@ async function createAdapter(
       } else {
         await normalized.renderSlide(slideIndex);
       }
+      getCurrentProps().onPerformanceMeasurement?.(
+        performanceMeasurement('slide-dom-svg-rendering', startedAt, slideIndex),
+      );
     },
     goToSlide: (index, options) => normalized.goToSlide(index, options),
     setZoom: (percent) => normalized.setZoom(percent),
@@ -418,6 +427,8 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         ...(parseFormatHint ? { formatHint: parseFormatHint } : {}),
         ...(parseMaxInputBytes !== undefined ? { maxInputBytes: parseMaxInputBytes } : {}),
         ...(parseFetchInit ? { fetchInit: parseFetchInit } : {}),
+        onPerformanceMeasurement: (measurement) =>
+          latestPropsRef.current.onPerformanceMeasurement?.(measurement),
       })
         .then((next) => {
           if (abort.signal.aborted) return;

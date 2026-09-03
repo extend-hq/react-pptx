@@ -42,8 +42,9 @@ export function Deck({ file }: { file: File }) {
 }
 ```
 
-The package also exports `parsePresentation`, `initWasm`, `setWasmSource`, normalized
-model types, search results, warnings, and an imperative `PptxViewerController`.
+The package also exports `parsePresentation`, `createPptxThumbnailRenderer`, `initWasm`,
+`setWasmSource`, normalized model types, search results, warnings, and an imperative
+`PptxViewerController`.
 
 ## Validation
 

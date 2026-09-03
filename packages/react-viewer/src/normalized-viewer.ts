@@ -76,6 +76,71 @@ interface ActiveListState {
   resumeMount?: (index: number) => void;
 }
 
+class PresentationAssetCache {
+  private references = 0;
+  private readonly objectUrls = new Set<string>();
+  private readonly assetUrls = new Map<string, string>();
+  private readonly metafileUrls = new Map<string, Promise<string | undefined>>();
+
+  acquire(): this {
+    this.references += 1;
+    return this;
+  }
+
+  metafileUrl(assetId: string, contentType: string, data: Uint8Array): Promise<string | undefined> {
+    const cached = this.metafileUrls.get(assetId);
+    if (cached) return cached;
+    const convert = contentType.includes('wmf') ? renderWmfToDataUrl : renderEmfToDataUrl;
+    const ownedBytes = data.slice();
+    const pending = convert(ownedBytes.buffer as ArrayBuffer, 2_048, 2_048, {
+      dpiScale: 2,
+      maxCanvasDimension: 4_096,
+      maxRecords: 200_000,
+      fontFamilyMap: METAFILE_FONT_MAP,
+    }).then((url) => url || undefined);
+    this.metafileUrls.set(assetId, pending);
+    return pending;
+  }
+
+  assetUrl(asset: PresentationAsset): Promise<string | undefined> {
+    if (asset.url) return Promise.resolve(asset.url);
+    if (!asset.data) return Promise.resolve(undefined);
+    const contentType = asset.contentType.toLowerCase();
+    if (contentType.includes('emf') || contentType.includes('wmf')) {
+      return this.metafileUrl(asset.id, contentType, asset.data);
+    }
+    const cached = this.assetUrls.get(asset.id);
+    if (cached) return Promise.resolve(cached);
+    const ownedBytes = asset.data.slice();
+    const url = URL.createObjectURL(
+      new Blob([ownedBytes.buffer as ArrayBuffer], { type: asset.contentType }),
+    );
+    this.objectUrls.add(url);
+    this.assetUrls.set(asset.id, url);
+    return Promise.resolve(url);
+  }
+
+  release(): void {
+    this.references = Math.max(0, this.references - 1);
+    if (this.references > 0) return;
+    for (const url of this.objectUrls) URL.revokeObjectURL(url);
+    this.objectUrls.clear();
+    this.assetUrls.clear();
+    this.metafileUrls.clear();
+  }
+}
+
+const presentationAssetCaches = new WeakMap<PresentationDocument, PresentationAssetCache>();
+
+function acquirePresentationAssetCache(presentation: PresentationDocument): PresentationAssetCache {
+  let cache = presentationAssetCaches.get(presentation);
+  if (!cache) {
+    cache = new PresentationAssetCache();
+    presentationAssetCaches.set(presentation, cache);
+  }
+  return cache.acquire();
+}
+
 /** Vertical spacing between slides in continuous mode, in CSS pixels. */
 const LIST_ITEM_GAP = 24;
 
@@ -765,9 +830,7 @@ export class NormalizedPresentationViewer {
   private current = 0;
   private zoom = 100;
   private fit: FitMode = 'contain';
-  private objectUrls = new Set<string>();
-  private assetUrls = new Map<string, string>();
-  private metafileUrls = new Map<string, Promise<string | undefined>>();
+  private readonly assetCache: PresentationAssetCache;
   private listCleanup: (() => void) | undefined;
   private highlight: HTMLElement | undefined;
   private activeMountResources: Set<Promise<void>> | undefined;
@@ -787,7 +850,9 @@ export class NormalizedPresentationViewer {
     private readonly container: HTMLElement,
     readonly presentation: PresentationDocument,
     private readonly callbacks: NormalizedViewerCallbacks = {},
-  ) {}
+  ) {
+    this.assetCache = acquirePresentationAssetCache(presentation);
+  }
 
   get slideCount(): number {
     return this.presentation.slides.length;
@@ -841,41 +906,8 @@ export class NormalizedPresentationViewer {
     this.callbacks.onSlideChange?.(index);
   }
 
-  private metafileUrl(
-    assetId: string,
-    contentType: string,
-    data: Uint8Array,
-  ): Promise<string | undefined> {
-    const cached = this.metafileUrls.get(assetId);
-    if (cached) return cached;
-    const convert = contentType.includes('wmf') ? renderWmfToDataUrl : renderEmfToDataUrl;
-    const ownedBytes = data.slice();
-    const pending = convert(ownedBytes.buffer as ArrayBuffer, 2_048, 2_048, {
-      dpiScale: 2,
-      maxCanvasDimension: 4_096,
-      maxRecords: 200_000,
-      fontFamilyMap: METAFILE_FONT_MAP,
-    }).then((url) => url || undefined);
-    this.metafileUrls.set(assetId, pending);
-    return pending;
-  }
-
   private assetUrl(asset: PresentationAsset): Promise<string | undefined> {
-    if (asset.url) return Promise.resolve(asset.url);
-    if (!asset.data) return Promise.resolve(undefined);
-    const contentType = asset.contentType.toLowerCase();
-    if (contentType.includes('emf') || contentType.includes('wmf')) {
-      return this.metafileUrl(asset.id, contentType, asset.data);
-    }
-    const cached = this.assetUrls.get(asset.id);
-    if (cached) return Promise.resolve(cached);
-    const ownedBytes = asset.data.slice();
-    const url = URL.createObjectURL(
-      new Blob([ownedBytes.buffer as ArrayBuffer], { type: asset.contentType }),
-    );
-    this.objectUrls.add(url);
-    this.assetUrls.set(asset.id, url);
-    return Promise.resolve(url);
+    return this.assetCache.assetUrl(asset);
   }
 
   private applyAsset(assetId: string, apply: (url: string) => void, nodeId: string): void {
@@ -2143,10 +2175,7 @@ export class NormalizedPresentationViewer {
     this.listCleanup = undefined;
     this.listState = undefined;
     this.clearSearchHighlights();
-    for (const url of this.objectUrls) URL.revokeObjectURL(url);
-    this.objectUrls.clear();
-    this.assetUrls.clear();
-    this.metafileUrls.clear();
+    this.assetCache.release();
     this.activeMountResources = undefined;
     for (const handle of [...this.mountedHandles]) handle.dispose();
     this.handlesByTarget.clear();

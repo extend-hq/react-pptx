@@ -943,6 +943,48 @@ describe('normalized viewer safety and fidelity', () => {
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:shared');
   });
+
+  it('shares loaded asset URLs across active renderers', async () => {
+    const createObjectURL = vi.fn(() => 'blob:shared-renderers');
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+    const documentModel: PresentationDocument = {
+      ...presentation,
+      assets: {
+        shared: {
+          id: 'shared',
+          contentType: 'image/png',
+          byteLength: 3,
+          data: new Uint8Array([1, 2, 3]),
+        },
+      },
+      slides: [
+        {
+          id: 'slide-1',
+          index: 0,
+          nodes: [
+            {
+              id: 'image-1',
+              type: 'image',
+              transform,
+              assetId: 'shared',
+            },
+          ],
+        },
+      ],
+    };
+    const first = new NormalizedPresentationViewer(document.createElement('div'), documentModel);
+    const second = new NormalizedPresentationViewer(document.createElement('div'), documentModel);
+
+    await first.renderSlide(0);
+    await second.renderSlide(0);
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    first.destroy();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    second.destroy();
+    expect(revokeObjectURL).toHaveBeenCalledOnce();
+  });
 });
 
 describe('normalized viewer generations and windowing', () => {

@@ -60,6 +60,17 @@ describe('parsePresentation', () => {
     expect(result).not.toHaveProperty('rendererData');
   });
 
+  it('reports native parsing performance', async () => {
+    vi.mocked(parseWithWasm).mockResolvedValueOnce(nativeDocument);
+    const measurements: string[] = [];
+
+    await parsePresentation(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
+      onPerformanceMeasurement: (measurement) => measurements.push(measurement.phase),
+    });
+
+    expect(measurements).toEqual(['wasm-parsing']);
+  });
+
   it('reports a native PPTX decode failure without loading a second parser', async () => {
     vi.mocked(parseWithWasm).mockResolvedValueOnce(null);
 
@@ -78,6 +89,7 @@ describe('parsePresentation', () => {
       formatHint: true,
       maxInputBytes: true,
       fetchInit: true,
+      onPerformanceMeasurement: true,
     };
 
     expect(Object.keys(supportedOptions)).toEqual([
@@ -85,6 +97,7 @@ describe('parsePresentation', () => {
       'formatHint',
       'maxInputBytes',
       'fetchInit',
+      'onPerformanceMeasurement',
     ]);
   });
 });

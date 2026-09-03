@@ -7,6 +7,7 @@ import type {
   PresentationSource,
 } from './types';
 import { parseWithWasm } from './wasm';
+import { performanceMeasurement, performanceNow } from './performance';
 
 const DEFAULT_MAX_INPUT_BYTES = 100 * 1024 * 1024;
 
@@ -131,15 +132,21 @@ export async function parsePresentation(
     };
   }
 
+  const downloadStartedAt = performanceNow();
   const buffer = await readSource(source, options);
+  if (typeof source === 'string' || source instanceof URL) {
+    options.onPerformanceMeasurement?.(performanceMeasurement('download', downloadStartedAt));
+  }
   const format = detectFormat(buffer, options.formatHint);
   const bytes = new Uint8Array(buffer);
   throwIfAborted(options.signal);
 
+  const parsingStartedAt = performanceNow();
   const nativeDocument = await parseWithWasm(bytes, {
     formatHint: format,
     ...(options.signal ? { signal: options.signal } : {}),
   });
+  options.onPerformanceMeasurement?.(performanceMeasurement('wasm-parsing', parsingStartedAt));
   throwIfAborted(options.signal);
 
   if (!nativeDocument) {
