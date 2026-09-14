@@ -38,9 +38,21 @@ import { ReactPptxViewer } from '@extend-ai/react-pptx';
 import '@extend-ai/react-pptx/styles.css';
 
 export function Deck({ file }: { file: File }) {
-  return <ReactPptxViewer source={file} mode="continuous" showThumbnails showToolbar />;
+  return (
+    <ReactPptxViewer
+      source={file}
+      mode="continuous"
+      defaultZoom="fit-width"
+      showThumbnails
+      showToolbar
+    />
+  );
 }
 ```
+
+Responsive zoom modes remain active as the viewport changes. `automatic` shrinks without
+enlarging, `fit-width` fills the viewport width, and `fit-page` uses both viewport dimensions.
+Numeric values are percentages, where `100` is the slide's actual size.
 
 The package also exports `parsePresentation`, `createPptxThumbnailRenderer`, `initWasm`,
 `setWasmSource`, normalized model types, search results, warnings, and an imperative

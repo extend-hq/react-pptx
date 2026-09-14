@@ -16,20 +16,22 @@ import { NormalizedPresentationViewer } from './normalized-viewer';
 import { parsePresentation } from './parse';
 import { performanceMeasurement, performanceNow } from './performance';
 import type {
-  FitMode,
   ParsedPresentation,
   PptxViewerController,
   ReactPptxViewerProps,
   SearchHighlightOptions,
   ViewerMode,
+  ViewerZoomLevel,
+  ViewerZoomState,
   ViewerSearchOptions,
 } from './types';
+import { normalizeViewerZoomLevel } from './zoom';
 
 interface ViewerAdapter {
   render(mode: ViewerMode, slideIndex: number): Promise<void>;
   goToSlide(index: number, options?: ScrollIntoViewOptions): Promise<void>;
-  setZoom(percent: number): Promise<void>;
-  setFitMode(mode: FitMode): Promise<void>;
+  setZoom(level: ViewerZoomLevel): Promise<void>;
+  resolveZoom(level: ViewerZoomLevel): number;
   search(query: string | RegExp, options?: ViewerSearchOptions): PresentationSearchResult[];
   highlight(result: PresentationSearchResult, options?: SearchHighlightOptions): Promise<void>;
   clearHighlights(): void;
@@ -114,6 +116,7 @@ async function createAdapter(
   props: ReactPptxViewerProps,
   getCurrentProps: () => ReactPptxViewerProps,
   onCurrentSlideChange: (index: number) => void,
+  onZoomChange: (state: ViewerZoomState) => void,
   reportWarning: (warning: import('@extend-ai/react-pptx-model').PresentationWarning) => void,
   isCurrent: () => boolean,
 ): Promise<ViewerAdapter> {
@@ -134,6 +137,9 @@ async function createAdapter(
   const callbacks = {
     onSlideChange: (index: number) => {
       if (active()) onCurrentSlideChange(index);
+    },
+    onZoomChange: (state: ViewerZoomState) => {
+      if (active()) onZoomChange(state);
     },
     onSlideRendered: (index: number, element: HTMLElement) => {
       if (!active()) return;
@@ -179,8 +185,8 @@ async function createAdapter(
       );
     },
     goToSlide: (index, options) => normalized.goToSlide(index, options),
-    setZoom: (percent) => normalized.setZoom(percent),
-    setFitMode: (mode) => normalized.setFitMode(mode),
+    setZoom: (level) => normalized.setZoom(level),
+    resolveZoom: (level) => normalized.resolveZoom(level),
     search: (query, options) => normalized.searchText(query, options),
     highlight: (result, options) => normalized.highlightSearchResult(result, options),
     clearHighlights: () => normalized.clearSearchHighlights(),
@@ -258,7 +264,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       slideIndex: controlledSlide,
       initialSlide = 0,
       zoom: controlledZoom,
-      defaultZoom = 100,
+      defaultZoom,
       fitMode = 'contain',
       showToolbar = false,
       showThumbnails = false,
@@ -289,6 +295,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       onError,
       onWarning,
       onSlideChange: _onSlideChange,
+      onZoomChange: _onZoomChange,
       onSlideRendered: _onSlideRendered,
       onSlideUnmounted: _onSlideUnmounted,
       onSearchResults,
@@ -307,7 +314,12 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     const [error, setError] = useState<PptxViewerError | null>(null);
     const [loading, setLoading] = useState(true);
     const [internalSlide, setInternalSlide] = useState(initialSlide);
-    const [internalZoom, setInternalZoom] = useState(defaultZoom);
+    const [internalZoom, setInternalZoom] = useState<ViewerZoomLevel>(() =>
+      normalizeViewerZoomLevel(defaultZoom ?? (fitMode === 'contain' ? 'automatic' : 100)),
+    );
+    const [resolvedZoom, setResolvedZoom] = useState<number>(() =>
+      typeof defaultZoom === 'number' ? (normalizeViewerZoomLevel(defaultZoom) as number) : 100,
+    );
     const [results, setResults] = useState<PresentationSearchResult[]>([]);
     const [runtimeWarnings, setRuntimeWarnings] = useState<
       import('@extend-ai/react-pptx-model').PresentationWarning[]
@@ -324,15 +336,37 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     const parseFetchInit = parseOptions?.fetchInit;
     const parseFetchInitKey = requestInitKey(parseFetchInit);
     const slide = clampSlide(controlledSlide ?? internalSlide, parsed?.document.slides.length ?? 0);
-    const zoom = controlledZoom ?? internalZoom;
+    const zoom = normalizeViewerZoomLevel(controlledZoom ?? internalZoom);
     const latestSlideRef = useRef(slide);
     const latestZoomRef = useRef(zoom);
-    const latestFitModeRef = useRef(fitMode);
+    const latestResolvedZoomRef = useRef(resolvedZoom);
+    const latestControlledZoomRef = useRef(controlledZoom);
+    const lastPublishedZoomRef = useRef<ViewerZoomState | undefined>(undefined);
     /** Last slide index the viewer itself reported through onSlideChange. */
     const lastViewerSlideRef = useRef<number | undefined>(undefined);
     latestSlideRef.current = slide;
     latestZoomRef.current = zoom;
-    latestFitModeRef.current = fitMode;
+    latestResolvedZoomRef.current = resolvedZoom;
+    latestControlledZoomRef.current = controlledZoom;
+    const notifyZoomChange = useCallback((state: ViewerZoomState) => {
+      const previous = lastPublishedZoomRef.current;
+      if (
+        previous?.level === state.level &&
+        Math.abs(previous.resolvedZoom - state.resolvedZoom) <= 0.01
+      ) {
+        return;
+      }
+      lastPublishedZoomRef.current = state;
+      latestPropsRef.current.onZoomChange?.(state);
+    }, []);
+    const publishZoomChange = useCallback(
+      (state: ViewerZoomState) => {
+        setResolvedZoom(state.resolvedZoom);
+        latestResolvedZoomRef.current = state.resolvedZoom;
+        notifyZoomChange(state);
+      },
+      [notifyZoomChange],
+    );
     const thumbnailCount = showThumbnails ? (parsed?.document.slides.length ?? 0) : 0;
     const getThumbnailKey = useCallback(
       (index: number) => parsed?.document.slides[index]?.id ?? index,
@@ -375,13 +409,30 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
             block: 'center',
           });
         },
-        async setZoom(percent) {
-          const next = Math.max(10, Math.min(400, percent));
+        async setZoom(level) {
+          const next = normalizeViewerZoomLevel(level);
+          const adapter = adapterRef.current;
+          if (latestControlledZoomRef.current !== undefined) {
+            notifyZoomChange({
+              level: next,
+              resolvedZoom:
+                adapter?.resolveZoom(next) ??
+                (typeof next === 'number' ? next : latestResolvedZoomRef.current),
+            });
+            return;
+          }
           setInternalZoom(next);
-          await adapterRef.current?.setZoom(next);
+          latestZoomRef.current = next;
+          if (adapter) await adapter.setZoom(next);
+          else {
+            publishZoomChange({
+              level: next,
+              resolvedZoom: typeof next === 'number' ? next : latestResolvedZoomRef.current,
+            });
+          }
         },
         async setFitMode(nextMode) {
-          await adapterRef.current?.setFitMode(nextMode);
+          await this.setZoom(nextMode === 'contain' ? 'automatic' : 100);
         },
         search(query, options) {
           return adapterRef.current?.search(query, options) ?? [];
@@ -406,8 +457,9 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         getDocument: () => parsed?.document ?? null,
         getSlideIndex: () => latestSlideRef.current,
         getZoom: () => latestZoomRef.current,
+        getResolvedZoom: () => latestResolvedZoomRef.current,
       }),
-      [adapterState?.generation, parsed],
+      [adapterState?.generation, notifyZoomChange, parsed, publishZoomChange],
     );
     useImperativeHandle(forwardedRef, () => controller, [controller]);
 
@@ -490,6 +542,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
               setInternalSlide(index);
               latestPropsRef.current.onSlideChange?.(index);
             },
+            publishZoomChange,
             (warning) => {
               if (!isCurrent()) return;
               setRuntimeWarnings((current) =>
@@ -509,11 +562,6 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
             return;
           }
           await adapter.setZoom(latestZoomRef.current);
-          if (!isCurrent()) {
-            adapter.destroy();
-            return;
-          }
-          await adapter.setFitMode(latestFitModeRef.current);
           if (!isCurrent()) {
             adapter.destroy();
             return;
@@ -555,7 +603,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       overscanViewport,
       batchSize,
       scrollElement,
-      width,
+      publishZoomChange,
     ]);
 
     useEffect(() => {
@@ -567,13 +615,12 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       }
     }, [adapterState, controlledSlide, slide]);
     useEffect(() => {
-      if (adapterState && controlledZoom !== undefined) {
-        void adapterState.adapter.setZoom(zoom);
-      }
-    }, [adapterState, controlledZoom, zoom]);
+      if (adapterState) void adapterState.adapter.setZoom(zoom);
+    }, [adapterState, zoom]);
     useEffect(() => {
-      if (adapterState) void adapterState.adapter.setFitMode(fitMode);
-    }, [adapterState, fitMode]);
+      if (controlledZoom !== undefined || defaultZoom !== undefined) return;
+      setInternalZoom(fitMode === 'contain' ? 'automatic' : 100);
+    }, [controlledZoom, defaultZoom, fitMode]);
     useEffect(() => {
       const adapter = adapterState?.adapter;
       if (!adapter || searchQuery === undefined || searchQuery === '') {
@@ -642,15 +689,15 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
             <div className="rpv-toolbar__cluster">
               <button
                 type="button"
-                onClick={() => void controller.setZoom(zoom - 10)}
+                onClick={() => void controller.setZoom(resolvedZoom - 10)}
                 aria-label="Zoom out"
               >
                 −
               </button>
-              <span className="rpv-toolbar__count">{zoom}%</span>
+              <span className="rpv-toolbar__count">{Math.round(resolvedZoom)}%</span>
               <button
                 type="button"
-                onClick={() => void controller.setZoom(zoom + 10)}
+                onClick={() => void controller.setZoom(resolvedZoom + 10)}
                 aria-label="Zoom in"
               >
                 +

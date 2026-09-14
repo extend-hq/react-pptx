@@ -34,7 +34,17 @@ export type PresentationSource =
   BinaryPresentationSource | PresentationDocument | ParsedPresentation;
 
 export type ViewerMode = 'slide' | 'continuous';
+/** @deprecated Superseded by `ViewerZoomLevel` and the `zoom` prop. */
 export type FitMode = 'contain' | 'none';
+
+export type ViewerZoomMode = 'automatic' | 'fit-page' | 'fit-width';
+export type ViewerZoomLevel = number | ViewerZoomMode;
+
+export type ViewerZoomState = {
+  level: ViewerZoomLevel;
+  /** Resolved percentage; `100` means actual size. */
+  resolvedZoom: number;
+};
 
 export interface ParsePresentationOptions {
   signal?: AbortSignal;
@@ -265,7 +275,8 @@ export interface PptxViewerController {
   goToSlide(index: number, scrollOptions?: ScrollIntoViewOptions): Promise<void>;
   next(): Promise<void>;
   previous(): Promise<void>;
-  setZoom(percent: number): Promise<void>;
+  setZoom(level: ViewerZoomLevel): Promise<void>;
+  /** @deprecated Use `setZoom()` with a responsive zoom mode. */
   setFitMode(mode: FitMode): Promise<void>;
   search(query: string | RegExp, options?: ViewerSearchOptions): PresentationSearchResult[];
   highlightSearchResult(
@@ -283,7 +294,10 @@ export interface PptxViewerController {
   ): Promise<() => void>;
   getDocument(): PresentationDocument | null;
   getSlideIndex(): number;
-  getZoom(): number;
+  /** Current numeric percentage or active responsive mode. */
+  getZoom(): ViewerZoomLevel;
+  /** Current clamped percentage after resolving the viewport-dependent mode. */
+  getResolvedZoom(): number;
 }
 
 export interface ReactPptxViewerProps extends Omit<
@@ -296,9 +310,11 @@ export interface ReactPptxViewerProps extends Omit<
   slideIndex?: number;
   /** Initial zero-based slide index for uncontrolled usage. */
   initialSlide?: number;
-  /** Controlled zoom percentage. */
-  zoom?: number;
-  defaultZoom?: number;
+  /** Controlled zoom percentage or responsive zoom mode. */
+  zoom?: ViewerZoomLevel;
+  /** Initial zoom percentage or responsive zoom mode for uncontrolled usage. */
+  defaultZoom?: ViewerZoomLevel;
+  /** @deprecated Superseded by `zoom`. `contain` maps to `automatic`. */
   fitMode?: FitMode;
   width?: number;
   height?: number | string;
@@ -328,6 +344,8 @@ export interface ReactPptxViewerProps extends Omit<
   onError?: (error: import('./errors').PptxViewerError) => void;
   onWarning?: (warning: PresentationWarning) => void;
   onSlideChange?: (index: number) => void;
+  /** Reports semantic zoom changes and responsive percentage recalculation. */
+  onZoomChange?: (state: ViewerZoomState) => void;
   onSlideRendered?: (index: number, element: HTMLElement) => void;
   onSlideUnmounted?: (index: number) => void;
   onSearchResults?: (results: readonly PresentationSearchResult[]) => void;

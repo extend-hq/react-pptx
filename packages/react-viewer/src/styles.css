@@ -136,9 +136,6 @@
   min-height: var(--rpv-height);
   overflow: visible;
 }
-.rpv-viewport > * {
-  max-width: 100%;
-}
 .rpv-status {
   position: absolute;
   z-index: 5;

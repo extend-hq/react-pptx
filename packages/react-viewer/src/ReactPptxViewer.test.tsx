@@ -372,6 +372,7 @@ describe('ReactPptxViewer adapter lifecycle', () => {
       getDocument: () => source,
       getSlideIndex: () => 0,
       getZoom: () => 100,
+      getResolvedZoom: () => 100,
     } satisfies PptxViewerController;
     const render = (prefetchSlideIndexes: readonly number[]) => (
       <DirectThumbnailHarness controller={controller} prefetchSlideIndexes={prefetchSlideIndexes} />
@@ -442,6 +443,7 @@ describe('ReactPptxViewer adapter lifecycle', () => {
         getDocument: () => source,
         getSlideIndex: () => 0,
         getZoom: () => 100,
+        getResolvedZoom: () => 100,
       }) satisfies PptxViewerController;
 
     await act(async () =>
@@ -606,6 +608,145 @@ describe('ReactPptxViewer adapter lifecycle', () => {
         '960px',
       );
     });
+  });
+
+  it('supports uncontrolled responsive zoom and exits the mode from consumer zoom controls', async () => {
+    installObserverStub();
+    let controller: PptxViewerController | undefined;
+    const onZoomChange = vi.fn();
+    const onViewportReady = (viewport: HTMLDivElement) => {
+      Object.defineProperties(viewport, {
+        clientWidth: { configurable: true, value: 480 },
+        clientHeight: { configurable: true, value: 360 },
+      });
+    };
+
+    await act(async () => {
+      root.render(
+        <ReactPptxViewer
+          source={documentModel('uncontrolled-responsive')}
+          mode="slide"
+          defaultZoom="fit-width"
+          onViewportReady={onViewportReady}
+          onZoomChange={onZoomChange}
+          onReady={(next) => {
+            controller = next;
+          }}
+        />,
+      );
+    });
+    await waitFor(() => expect(controller?.getResolvedZoom()).toBe(50));
+    expect(controller?.getZoom()).toBe('fit-width');
+    expect(host.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')?.style.width).toBe('480px');
+
+    await act(async () => controller?.setZoom(125));
+    expect(controller?.getZoom()).toBe(125);
+    expect(controller?.getResolvedZoom()).toBe(125);
+    expect(host.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')?.style.width).toBe('1200px');
+
+    await act(async () => controller?.setZoom('fit-page'));
+    expect(controller?.getZoom()).toBe('fit-page');
+    expect(controller?.getResolvedZoom()).toBe(50);
+
+    await act(async () => controller?.setZoom((controller?.getResolvedZoom() ?? 0) + 10));
+    expect(controller?.getZoom()).toBe(60);
+    expect(controller?.getResolvedZoom()).toBe(60);
+    expect(onZoomChange).toHaveBeenLastCalledWith({ level: 60, resolvedZoom: 60 });
+
+    await act(async () => controller?.setZoom('automatic'));
+    await act(async () => controller?.setZoom((controller?.getResolvedZoom() ?? 0) - 10));
+    expect(controller?.getZoom()).toBe(40);
+    expect(controller?.getResolvedZoom()).toBe(40);
+  });
+
+  it('keeps controlled zoom unchanged until the host accepts a requested level', async () => {
+    installObserverStub();
+    let controller: PptxViewerController | undefined;
+    const onZoomChange = vi.fn();
+    const source = documentModel('controlled-responsive');
+    const onViewportReady = (viewport: HTMLDivElement) => {
+      Object.defineProperties(viewport, {
+        clientWidth: { configurable: true, value: 480 },
+        clientHeight: { configurable: true, value: 360 },
+      });
+    };
+    const render = (zoom: 'fit-width' | number) => (
+      <ReactPptxViewer
+        source={source}
+        mode="slide"
+        zoom={zoom}
+        onViewportReady={onViewportReady}
+        onZoomChange={onZoomChange}
+        onReady={(next) => {
+          controller = next;
+        }}
+      />
+    );
+
+    await act(async () => root.render(render('fit-width')));
+    await waitFor(() => expect(controller?.getResolvedZoom()).toBe(50));
+    await act(async () => controller?.setZoom(125));
+    expect(controller?.getZoom()).toBe('fit-width');
+    expect(controller?.getResolvedZoom()).toBe(50);
+    expect(onZoomChange).toHaveBeenLastCalledWith({ level: 125, resolvedZoom: 125 });
+    expect(host.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')?.style.width).toBe('480px');
+
+    await act(async () => root.render(render(125)));
+    await waitFor(() => {
+      expect(controller?.getZoom()).toBe(125);
+      expect(controller?.getResolvedZoom()).toBe(125);
+    });
+    expect(host.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')?.style.width).toBe('1200px');
+  });
+
+  it('recalculates responsive zoom after the viewport changes size', async () => {
+    installObserverStub();
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+    let width = 960;
+    const onZoomChange = vi.fn();
+    let controller: PptxViewerController | undefined;
+    const onViewportReady = (viewport: HTMLDivElement) => {
+      Object.defineProperties(viewport, {
+        clientWidth: { configurable: true, get: () => width },
+        clientHeight: { configurable: true, value: 720 },
+      });
+    };
+
+    await act(async () => {
+      root.render(
+        <ReactPptxViewer
+          source={documentModel('responsive-resize')}
+          mode="slide"
+          defaultZoom="fit-width"
+          onViewportReady={onViewportReady}
+          onZoomChange={onZoomChange}
+          onReady={(next) => {
+            controller = next;
+          }}
+        />,
+      );
+    });
+    await waitFor(() => expect(controller?.getResolvedZoom()).toBe(100));
+
+    width = 480;
+    await act(async () => {
+      for (const callback of resizeCallbacks) callback([], {} as ResizeObserver);
+      await Promise.resolve();
+    });
+
+    expect(controller?.getZoom()).toBe('fit-width');
+    expect(controller?.getResolvedZoom()).toBe(50);
+    expect(host.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')?.style.width).toBe('480px');
+    expect(onZoomChange).toHaveBeenLastCalledWith({ level: 'fit-width', resolvedZoom: 50 });
   });
 
   it('shows the empty state without surfacing a render error', async () => {

@@ -25,6 +25,36 @@ during SSR is safe.
 Unknown or degraded content is surfaced through `onWarning` and `showDiagnostics` rather
 than silently removed.
 
+## Responsive zoom
+
+The viewer accepts the same responsive zoom shape as `@extend-ai/react-docx`. Numeric values are
+percentages, while `automatic`, `fit-page`, and `fit-width` remain active as the viewport changes.
+For example, the shared API can be expressed as:
+
+```tsx
+<Viewer defaultZoom="fit-width" />
+```
+
+With this package's component and required source, use:
+
+```tsx
+<ReactPptxViewer
+  source={file}
+  defaultZoom="fit-width"
+  onZoomChange={({ level, resolvedZoom }) => {
+    console.log(level, resolvedZoom);
+  }}
+/>
+```
+
+`automatic` shrinks slides that are wider than the viewport without enlarging them. `fit-width`
+may enlarge or shrink to fill the available width, and `fit-page` uses both viewport dimensions.
+The controller exposes `setZoom(level)`, `getZoom()`, and `getResolvedZoom()`, so a custom toolbar
+can retain the semantic mode while displaying its current percentage. Zooming in or out from a
+responsive mode should pass `getResolvedZoom() + delta` to `setZoom()`, which switches to a numeric
+level. The older `fitMode` prop remains supported for compatibility; `contain` maps to `automatic`
+when the new zoom props are absent.
+
 ## Supported presentation formats
 
 `.pptx` and legacy PowerPoint 97–2003 `.ppt` files are both accepted by the same `source`

@@ -79,6 +79,33 @@ describe('normalized viewer scrolling', () => {
     container.remove();
   });
 
+  it('resolves responsive zoom from external and viewer content-box padding', async () => {
+    const hostScrollArea = document.createElement('div');
+    const container = document.createElement('div');
+    hostScrollArea.append(container);
+    document.body.append(hostScrollArea);
+    hostScrollArea.style.padding = '20px';
+    container.style.padding = '20px';
+    Object.defineProperties(hostScrollArea, {
+      clientWidth: { configurable: true, value: 1_040 },
+      clientHeight: { configurable: true, value: 680 },
+    });
+    const viewer = new NormalizedPresentationViewer(container, presentation);
+
+    await viewer.setZoom('fit-width');
+    await viewer.renderList({ enabled: false, scrollElement: hostScrollArea });
+    const wrapper = container.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    expect(wrapper.style.width).toBe('960px');
+    expect(viewer.resolvedZoomPercent).toBe(100);
+
+    await viewer.setZoom('fit-page');
+    expect(Number.parseFloat(wrapper.style.width)).toBeCloseTo(800, 6);
+    expect(viewer.resolvedZoomPercent).toBeCloseTo(83.333, 3);
+
+    viewer.destroy();
+    hostScrollArea.remove();
+  });
+
   it('uses its viewport by default and reports the centered slide while scrolling', async () => {
     const container = document.createElement('div');
     container.scrollTop = 500;
@@ -1228,15 +1255,116 @@ describe('normalized viewer generations and windowing', () => {
     await viewer.setZoom(200);
     expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
     expect(container.querySelector('[data-rpv-slide-index="0"]')).toBe(slide);
-    expect(wrapper.style.width).toBe('960px');
-    expect(slide.style.transform).toBe('scale(1)');
-
-    await viewer.setFitMode('none');
-    expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
     expect(wrapper.style.width).toBe('1920px');
     expect(slide.style.transform).toBe('scale(2)');
+
+    await viewer.setFitMode('contain');
+    expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
+    expect(wrapper.style.width).toBe('480px');
+    expect(slide.style.transform).toBe('scale(0.5)');
+
+    await viewer.setFitMode('none');
+    expect(wrapper.style.width).toBe('960px');
+    expect(slide.style.transform).toBe('scale(1)');
     expect(rendered).toEqual([0]);
     expect(unmounted).toEqual([]);
+    viewer.destroy();
+  });
+
+  it('keeps a responsive zoom mode active and preserves the viewport anchor on resize', async () => {
+    let width = 480;
+    let height = 360;
+    let resize: ResizeObserverCallback | undefined;
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        resize = callback;
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+    const container = document.createElement('div');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, get: () => width },
+      clientHeight: { configurable: true, get: () => height },
+    });
+    const states: { level: string | number; resolvedZoom: number }[] = [];
+    const viewer = new NormalizedPresentationViewer(container, presentation, {
+      onZoomChange: (state) => states.push(state),
+    });
+
+    await viewer.setZoom('fit-width');
+    await viewer.renderSlide(0);
+    const wrapper = container.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    const slide = container.querySelector<HTMLElement>('[data-rpv-slide-index="0"]')!;
+    expect(wrapper.style.width).toBe('480px');
+    expect(viewer.zoom).toBe('fit-width');
+    expect(viewer.resolvedZoomPercent).toBe(50);
+
+    container.scrollTop = 90;
+    container.scrollLeft = 20;
+    width = 960;
+    height = 720;
+    resize?.([], {} as ResizeObserver);
+    await Promise.resolve();
+
+    expect(container.querySelector('[data-rpv-slide-wrapper]')).toBe(wrapper);
+    expect(container.querySelector('[data-rpv-slide-index="0"]')).toBe(slide);
+    expect(wrapper.style.width).toBe('960px');
+    expect(container.scrollTop).toBe(180);
+    expect(container.scrollLeft).toBe(40);
+    expect(viewer.zoom).toBe('fit-width');
+    expect(viewer.resolvedZoomPercent).toBe(100);
+    expect(states.at(-1)).toEqual({ level: 'fit-width', resolvedZoom: 100 });
+    viewer.destroy();
+  });
+
+  it('uses the responsive scale for virtualized geometry and slide hit targets', async () => {
+    let width = 480;
+    let height = 360;
+    const resizeCallbacks: ResizeObserverCallback[] = [];
+    class ResizeObserverStub {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    }
+    vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+    const container = document.createElement('div');
+    Object.defineProperties(container, {
+      clientWidth: { configurable: true, get: () => width },
+      clientHeight: { configurable: true, get: () => height },
+    });
+    const node = shape('scaled-hit-target', 'Target');
+    node.transform = { x: 952_500, y: 952_500, width: 952_500, height: 952_500 };
+    const viewer = new NormalizedPresentationViewer(container, presentationWithSlides(3, [node]));
+
+    await viewer.setZoom('automatic');
+    await viewer.renderList({ enabled: true, overscanViewport: 0 });
+    const firstItem = container.querySelector<HTMLElement>('[data-rpv-list-item="0"]')!;
+    const firstWrapper = firstItem.querySelector<HTMLElement>('[data-rpv-slide-wrapper]')!;
+    const firstSlide = firstWrapper.querySelector<HTMLElement>('[data-rpv-slide-index="0"]')!;
+    const hitTarget = firstSlide.querySelector<HTMLElement>(
+      '[data-rpv-node-id="scaled-hit-target"]',
+    )!;
+    expect(firstItem.style.height).toBe('360px');
+    expect(firstWrapper.style.width).toBe('480px');
+    expect(firstSlide.style.transform).toBe('scale(0.5)');
+    expect(hitTarget.style.left).toBe('10.416666666666668%');
+
+    width = 1_920;
+    height = 1_080;
+    resizeCallbacks[0]?.([], {} as ResizeObserver);
+    await Promise.resolve();
+
+    expect(firstItem.style.height).toBe('720px');
+    expect(firstWrapper.style.width).toBe('960px');
+    expect(firstSlide.style.transform).toBe('scale(1)');
+    expect(hitTarget.style.left).toBe('10.416666666666668%');
+    expect(viewer.zoom).toBe('automatic');
     viewer.destroy();
   });
 

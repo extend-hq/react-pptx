@@ -1,5 +1,12 @@
 # @extend-ai/react-pptx
 
+## 0.2.1
+
+### Patch Changes
+
+- Add first-class controlled and uncontrolled responsive zoom modes, resize-aware resolved zoom,
+  and controller APIs for consumer-owned zoom controls while preserving `fitMode` compatibility.
+
 ## 0.1.1
 
 ### Patch Changes

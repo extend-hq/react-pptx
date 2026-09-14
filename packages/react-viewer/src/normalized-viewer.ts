@@ -14,12 +14,20 @@ import { renderChartInto } from './charts/chart-host';
 import type {
   FitMode,
   SearchHighlightOptions,
+  ViewerZoomLevel,
+  ViewerZoomState,
   ViewerSearchOptions,
   VirtualizationOptions,
 } from './types';
 import { Virtualizer } from '@tanstack/virtual-core';
 import { OFFICE_FONT_FALLBACKS } from './fonts';
 import { renderEmfToDataUrl, renderWmfToDataUrl } from './metafile-renderer';
+import {
+  MAX_VIEWER_ZOOM,
+  MIN_VIEWER_ZOOM,
+  normalizeViewerZoomLevel,
+  resolveViewerZoom,
+} from './zoom';
 
 const EMU_PER_CSS_PIXEL = 9_525;
 const DEFAULT_TEXT_HORIZONTAL_INSET_EMU = 91_440;
@@ -37,6 +45,7 @@ type TextSpacingValue = number | { value: number; unit: 'points' | 'percent' };
 
 interface NormalizedViewerCallbacks {
   onSlideChange?: (index: number) => void;
+  onZoomChange?: (state: ViewerZoomState) => void;
   onSlideRendered?: (index: number, element: HTMLElement) => void;
   onSlideUnmounted?: (index: number) => void;
   onNodeError?: (nodeId: string, error: unknown) => void;
@@ -149,6 +158,11 @@ const LIST_ITEM_GAP = 24;
  * display: none) so the virtualizer still mounts an initial window.
  */
 const FALLBACK_VIEWPORT_RECT = { width: 800, height: 600 };
+
+function pixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
 
 function scaleListAnchorOffset(
   offset: number,
@@ -828,9 +842,11 @@ function searchDocument(
 
 export class NormalizedPresentationViewer {
   private current = 0;
-  private zoom = 100;
-  private fit: FitMode = 'contain';
+  private zoomLevel: ViewerZoomLevel = 'automatic';
+  private resolvedZoom = 100;
   private readonly assetCache: PresentationAssetCache;
+  private resizeObserver: ResizeObserver | undefined;
+  private activeViewport: HTMLElement | undefined;
   private listCleanup: (() => void) | undefined;
   private highlight: HTMLElement | undefined;
   private activeMountResources: Set<Promise<void>> | undefined;
@@ -842,6 +858,7 @@ export class NormalizedPresentationViewer {
   private renderGeneration = 0;
   private navigationGeneration = 0;
   private lastNotifiedSlide: number | undefined;
+  private lastZoomNotification: ViewerZoomState | undefined;
   private listState: ActiveListState | undefined;
   private renderState:
     { mode: 'single' } | { mode: 'continuous'; options: RenderListOptions } | undefined;
@@ -860,11 +877,17 @@ export class NormalizedPresentationViewer {
   get currentSlideIndex(): number {
     return this.current;
   }
+  get zoom(): ViewerZoomLevel {
+    return this.zoomLevel;
+  }
   get zoomPercent(): number {
-    return this.zoom;
+    return this.resolvedZoom;
+  }
+  get resolvedZoomPercent(): number {
+    return this.resolvedZoom;
   }
   get fitMode(): FitMode {
-    return this.fit;
+    return typeof this.zoomLevel === 'number' ? 'none' : 'contain';
   }
 
   private get naturalSlideWidth(): number {
@@ -877,12 +900,63 @@ export class NormalizedPresentationViewer {
     return Number.isFinite(height) && height > 0 ? height : 1;
   }
 
-  private scaleForViewport(viewportWidth: number): number {
-    const fitScale =
-      this.fit === 'contain'
-        ? Math.min(1, (viewportWidth || this.naturalSlideWidth) / this.naturalSlideWidth)
-        : 1;
-    return fitScale * (this.zoom / 100);
+  private viewportSize(viewport: HTMLElement): { width: number; height: number } {
+    const rect = viewport.getBoundingClientRect();
+    let width = viewport.clientWidth || rect.width;
+    let height = viewport.clientHeight || rect.height;
+    if (typeof getComputedStyle === 'function') {
+      const viewportStyle = getComputedStyle(viewport);
+      width -= pixelValue(viewportStyle.paddingLeft) + pixelValue(viewportStyle.paddingRight);
+      height -= pixelValue(viewportStyle.paddingTop) + pixelValue(viewportStyle.paddingBottom);
+      if (viewport !== this.container) {
+        const containerStyle = getComputedStyle(this.container);
+        width -= pixelValue(containerStyle.paddingLeft) + pixelValue(containerStyle.paddingRight);
+        height -= pixelValue(containerStyle.paddingTop) + pixelValue(containerStyle.paddingBottom);
+      }
+    }
+    return { width: Math.max(0, width), height: Math.max(0, height) };
+  }
+
+  resolveZoom(level: ViewerZoomLevel, viewport = this.activeViewport ?? this.container): number {
+    const size = this.viewportSize(viewport);
+    return resolveViewerZoom(
+      level,
+      size.width,
+      size.height,
+      this.naturalSlideWidth,
+      this.naturalSlideHeight,
+    );
+  }
+
+  private scaleForViewport(viewport: HTMLElement): number {
+    return this.resolveZoom(this.zoomLevel, viewport) / 100;
+  }
+
+  private publishZoom(resolvedZoom: number): void {
+    const normalized = Math.max(MIN_VIEWER_ZOOM, Math.min(MAX_VIEWER_ZOOM, resolvedZoom));
+    const levelChanged = this.lastZoomNotification?.level !== this.zoomLevel;
+    const resolutionChanged =
+      this.lastZoomNotification === undefined ||
+      Math.abs(this.lastZoomNotification.resolvedZoom - normalized) > 0.01;
+    this.resolvedZoom = normalized;
+    if (!levelChanged && !resolutionChanged) return;
+    const state = { level: this.zoomLevel, resolvedZoom: normalized } satisfies ViewerZoomState;
+    this.lastZoomNotification = state;
+    this.callbacks.onZoomChange?.(state);
+  }
+
+  private observeViewport(viewport: HTMLElement): void {
+    if (this.activeViewport === viewport && this.resizeObserver) return;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+    this.activeViewport = viewport;
+    if (typeof ResizeObserver === 'undefined') return;
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.destroyed || typeof this.zoomLevel === 'number') return;
+      void this.updateRenderedScale();
+    });
+    this.resizeObserver.observe(viewport);
+    if (viewport !== this.container) this.resizeObserver.observe(this.container);
   }
 
   private isRenderActive(generation: number): boolean {
@@ -895,6 +969,9 @@ export class NormalizedPresentationViewer {
     this.navigationGeneration += 1;
     this.listCleanup?.();
     this.listCleanup = undefined;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+    this.activeViewport = undefined;
     this.listState = undefined;
     this.clearSearchHighlights();
     return generation;
@@ -1517,7 +1594,7 @@ export class NormalizedPresentationViewer {
     } finally {
       this.activeMountResources = previousResources;
     }
-    const effectiveScale = scale ?? this.scaleForViewport(target.clientWidth);
+    const effectiveScale = scale ?? this.scaleForViewport(target);
     const wrapper = document.createElement('div');
     wrapper.dataset.rpvSlideWrapper = String(index);
     wrapper.style.position = 'relative';
@@ -1622,6 +1699,7 @@ export class NormalizedPresentationViewer {
     this.renderState = { mode: 'single' };
     const generation = this.beginRender();
     if (generation === undefined) return;
+    this.observeViewport(this.container);
     this.current = Math.max(0, Math.min(this.slideCount - 1, index));
     this.disposeContainerSlides();
     this.container.replaceChildren();
@@ -1631,6 +1709,7 @@ export class NormalizedPresentationViewer {
     if (!this.isRenderActive(generation) || this.handlesByTarget.get(this.container) !== handle) {
       return;
     }
+    this.publishZoom(this.scaleForViewport(this.container) * 100);
     this.notifySlideChange(this.current);
   }
 
@@ -1702,7 +1781,8 @@ export class NormalizedPresentationViewer {
       Math.min(this.slideCount - 1, options.initialSlideIndex ?? this.current),
     );
     const scroller = options.scrollElement ?? this.container;
-    let effectiveScale = this.scaleForViewport(scroller.clientWidth);
+    this.observeViewport(scroller);
+    let effectiveScale = this.scaleForViewport(scroller);
     let slideHeight = this.naturalSlideHeight * effectiveScale;
     let itemStride = slideHeight + LIST_ITEM_GAP;
 
@@ -1719,6 +1799,8 @@ export class NormalizedPresentationViewer {
       const state: ActiveListState = { generation, options: normalizedOptions, placeholders };
       state.updateScale = () => {
         if (!this.isRenderActive(generation) || this.listState !== state) return;
+        const previousScale = effectiveScale;
+        const previousScrollLeft = scroller.scrollLeft;
         const previousStride = itemStride;
         const previousSlideHeight = slideHeight;
         const listStart =
@@ -1733,13 +1815,17 @@ export class NormalizedPresentationViewer {
           Math.min(this.slideCount - 1, Math.floor(listOffset / previousStride)),
         );
         const anchorOffset = listOffset - anchorIndex * previousStride;
-        effectiveScale = this.scaleForViewport(scroller.clientWidth);
+        effectiveScale = this.scaleForViewport(scroller);
         slideHeight = this.naturalSlideHeight * effectiveScale;
         itemStride = slideHeight + LIST_ITEM_GAP;
         placeholders.forEach((placeholder) => {
           placeholder.item.style.minHeight = `${slideHeight}px`;
           placeholder.setScale(effectiveScale);
         });
+        if (previousScale > 0 && previousScrollLeft > 0) {
+          scroller.scrollLeft = previousScrollLeft * (effectiveScale / previousScale);
+        }
+        this.publishZoom(effectiveScale * 100);
         // Resizing content that is entirely below an external viewport must
         // not move that viewport toward or away from the list.
         if (listOffset < 0) return;
@@ -1767,6 +1853,7 @@ export class NormalizedPresentationViewer {
         initialItem.scrollIntoView?.({ behavior: 'instant', block: 'start' });
       }
       this.current = initialIndex;
+      this.publishZoom(effectiveScale * 100);
       this.notifySlideChange(initialIndex);
       return;
     }
@@ -1942,6 +2029,8 @@ export class NormalizedPresentationViewer {
     };
     state.updateScale = () => {
       if (!isActive()) return;
+      const previousScale = effectiveScale;
+      const previousScrollLeft = scroller.scrollLeft;
       const previousStride = itemStride;
       const previousSlideHeight = slideHeight;
       const anchorIndex = this.current;
@@ -1963,7 +2052,7 @@ export class NormalizedPresentationViewer {
       const previousOffset = previousScrollTop - scrollMargin;
       const anchorOffset = previousOffset - anchorIndex * previousStride;
 
-      effectiveScale = this.scaleForViewport(scroller.clientWidth);
+      effectiveScale = this.scaleForViewport(scroller);
       slideHeight = this.naturalSlideHeight * effectiveScale;
       itemStride = slideHeight + LIST_ITEM_GAP;
       sizer.style.height = `${this.slideCount * itemStride - LIST_ITEM_GAP}px`;
@@ -1972,6 +2061,9 @@ export class NormalizedPresentationViewer {
         placeholder.item.style.transform = `translateY(${index * itemStride}px)`;
         placeholder.setScale(effectiveScale);
       });
+      if (previousScale > 0 && previousScrollLeft > 0) {
+        scroller.scrollLeft = previousScrollLeft * (effectiveScale / previousScale);
+      }
 
       const nextAnchorOffset = scaleListAnchorOffset(
         anchorOffset,
@@ -1988,6 +2080,7 @@ export class NormalizedPresentationViewer {
       writeScrollTop(nextScrollTop);
       virtualizer.setOptions({ ...virtualizer.options, overscan });
       virtualizer.measure();
+      this.publishZoom(effectiveScale * 100);
     };
     const teardown = virtualizer._didMount();
     this.listCleanup = teardown;
@@ -2007,6 +2100,7 @@ export class NormalizedPresentationViewer {
       this.container.scrollLeft = 0;
     }
     this.current = initialIndex;
+    this.publishZoom(effectiveScale * 100);
     this.notifySlideChange(initialIndex);
   }
 
@@ -2052,10 +2146,7 @@ export class NormalizedPresentationViewer {
     await this.renderSlide(next);
   }
 
-  async setZoom(percent: number): Promise<void> {
-    const next = Math.max(10, Math.min(400, percent));
-    if (this.zoom === next) return;
-    this.zoom = next;
+  private async updateRenderedScale(): Promise<void> {
     if (this.renderState?.mode === 'continuous') {
       const state = this.listState;
       if (state && this.isRenderActive(state.generation) && state.updateScale) {
@@ -2065,25 +2156,36 @@ export class NormalizedPresentationViewer {
       }
     } else if (this.renderState) {
       const handle = this.handlesByTarget.get(this.container);
-      if (handle) handle.setScale(this.scaleForViewport(this.container.clientWidth));
-      else await this.renderSlide(this.current);
+      if (handle) {
+        const viewport = this.activeViewport ?? this.container;
+        const previousScale = this.resolvedZoom / 100;
+        const previousScrollTop = viewport.scrollTop;
+        const previousScrollLeft = viewport.scrollLeft;
+        const nextScale = this.scaleForViewport(viewport);
+        handle.setScale(nextScale);
+        if (previousScale > 0) {
+          viewport.scrollTop = previousScrollTop * (nextScale / previousScale);
+          viewport.scrollLeft = previousScrollLeft * (nextScale / previousScale);
+        }
+        this.publishZoom(nextScale * 100);
+      } else await this.renderSlide(this.current);
+    } else {
+      this.publishZoom(this.resolveZoom(this.zoomLevel));
     }
   }
-  async setFitMode(mode: FitMode): Promise<void> {
-    if (this.fit === mode) return;
-    this.fit = mode;
-    if (this.renderState?.mode === 'continuous') {
-      const state = this.listState;
-      if (state && this.isRenderActive(state.generation) && state.updateScale) {
-        state.updateScale();
-      } else {
-        await this.renderList({ ...this.renderState.options, initialSlideIndex: this.current });
-      }
-    } else if (this.renderState) {
-      const handle = this.handlesByTarget.get(this.container);
-      if (handle) handle.setScale(this.scaleForViewport(this.container.clientWidth));
-      else await this.renderSlide(this.current);
+
+  async setZoom(level: ViewerZoomLevel): Promise<void> {
+    const next = normalizeViewerZoomLevel(level);
+    if (this.zoomLevel === next) {
+      if (typeof next !== 'number') await this.updateRenderedScale();
+      return;
     }
+    this.zoomLevel = next;
+    await this.updateRenderedScale();
+  }
+
+  async setFitMode(mode: FitMode): Promise<void> {
+    await this.setZoom(mode === 'contain' ? 'automatic' : 100);
   }
   searchText(query: string | RegExp, options?: ViewerSearchOptions): PresentationSearchResult[] {
     return searchDocument(this.presentation, query, options);
@@ -2173,6 +2275,9 @@ export class NormalizedPresentationViewer {
     this.navigationGeneration += 1;
     this.listCleanup?.();
     this.listCleanup = undefined;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = undefined;
+    this.activeViewport = undefined;
     this.listState = undefined;
     this.clearSearchHighlights();
     this.assetCache.release();
