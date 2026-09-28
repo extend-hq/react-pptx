@@ -1205,3 +1205,209 @@ fn smartart_without_drawing_emits_readable_semantic_fallback() {
         warning.code == "degraded-rendering" && warning.feature.as_deref() == Some("smartart")
     }));
 }
+
+/// Mirrors python-pptx's default template: a typeless `<p:ph idx="1"/>`
+/// content placeholder whose layout carries "Click to edit" prompt paragraphs
+/// at lvl 0..3, and a table that references the built-in "Medium Style 2 -
+/// Accent 1" style while `ppt/tableStyles.xml` defines no styles at all.
+fn default_template_pptx() -> Vec<u8> {
+    let mut output = Cursor::new(Vec::new());
+    let mut zip = ZipWriter::new(&mut output);
+    add_file(
+        &mut zip,
+        "ppt/presentation.xml",
+        br#"<p:presentation xmlns:p="p" xmlns:r="r"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/></p:presentation>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/_rels/presentation.xml.rels",
+        br#"<Relationships><Relationship Id="rId1" Target="slides/slide1.xml"/><Relationship Id="rIdMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rIdTableStyles" Target="tableStyles.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/tableStyles.xml",
+        br#"<a:tblStyleLst xmlns:a="a" def="{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"/>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/_rels/slide1.xml.rels",
+        br#"<Relationships><Relationship Id="rIdLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
+        br#"<Relationships><Relationship Id="rIdMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slideMasters/_rels/slideMaster1.xml.rels",
+        br#"<Relationships><Relationship Id="rIdTheme" Target="../theme/theme1.xml"/><Relationship Id="rIdLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slides/slide1.xml",
+        br#"<p:sld xmlns:p="p" xmlns:a="a">
+          <p:cSld><p:spTree>
+            <p:nvGrpSpPr/><p:grpSpPr/>
+            <p:sp>
+              <p:nvSpPr><p:cNvPr id="3" name="Content Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>
+              <p:spPr/>
+              <p:txBody><a:bodyPr/><a:lstStyle/>
+                <a:p><a:r><a:t>One</a:t></a:r></a:p>
+                <a:p><a:r><a:t>Two</a:t></a:r></a:p>
+                <a:p><a:r><a:t>Three</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="1"/><a:r><a:t>Nested</a:t></a:r></a:p>
+              </p:txBody>
+            </p:sp>
+            <p:graphicFrame>
+              <p:nvGraphicFramePr><p:cNvPr id="4" name="Table 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>
+              <p:xfrm><a:off x="0" y="0"/><a:ext cx="6000000" cy="2000000"/></p:xfrm>
+              <a:graphic><a:graphicData><a:tbl>
+                <a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}</a:tableStyleId></a:tblPr>
+                <a:tblGrid><a:gridCol w="3000000"/><a:gridCol w="3000000"/></a:tblGrid>
+                <a:tr h="500000"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Stage</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Clinics</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+                <a:tr h="500000"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Trial</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>9</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+                <a:tr h="500000"><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Signed</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc><a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>12</a:t></a:r></a:p></a:txBody><a:tcPr/></a:tc></a:tr>
+              </a:tbl></a:graphicData></a:graphic>
+            </p:graphicFrame>
+          </p:spTree></p:cSld>
+        </p:sld>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slideLayouts/slideLayout1.xml",
+        br#"<p:sldLayout xmlns:p="p" xmlns:a="a" type="obj">
+          <p:cSld name="Title and Content"><p:spTree>
+            <p:nvGrpSpPr/><p:grpSpPr/>
+            <p:sp>
+              <p:nvSpPr><p:cNvPr id="3" name="Content Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph idx="1"/></p:nvPr></p:nvSpPr>
+              <p:spPr/>
+              <p:txBody><a:bodyPr/><a:lstStyle/>
+                <a:p><a:pPr lvl="0"/><a:r><a:t>Click to edit Master text styles</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="1"/><a:r><a:t>Second level</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="2"/><a:r><a:t>Third level</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="3"/><a:r><a:t>Fourth level</a:t></a:r></a:p>
+              </p:txBody>
+            </p:sp>
+          </p:spTree></p:cSld>
+        </p:sldLayout>"#,
+    );
+    add_file(
+        &mut zip,
+        "ppt/slideMasters/slideMaster1.xml",
+        r#"<p:sldMaster xmlns:p="p" xmlns:a="a">
+          <p:cSld><p:spTree>
+            <p:nvGrpSpPr/><p:grpSpPr/>
+            <p:sp>
+              <p:nvSpPr><p:cNvPr id="3" name="Text Placeholder 2"/><p:cNvSpPr/><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr>
+              <p:spPr><a:xfrm><a:off x="457200" y="1600200"/><a:ext cx="8229600" cy="4525963"/></a:xfrm></p:spPr>
+              <p:txBody><a:bodyPr/><a:lstStyle/>
+                <a:p><a:pPr lvl="0"/><a:r><a:t>Click to edit Master text styles</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="1"/><a:r><a:t>Second level</a:t></a:r></a:p>
+                <a:p><a:pPr lvl="2"/><a:r><a:t>Third level</a:t></a:r></a:p>
+              </p:txBody>
+            </p:sp>
+          </p:spTree></p:cSld>
+          <p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1"/>
+          <p:txStyles>
+            <p:titleStyle><a:lvl1pPr algn="ctr"><a:buNone/><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle>
+            <p:bodyStyle>
+              <a:lvl1pPr marL="342900" indent="-342900"><a:buFont typeface="Arial"/><a:buChar char="•"/><a:defRPr sz="3200"/></a:lvl1pPr>
+              <a:lvl2pPr marL="742950" indent="-285750"><a:buFont typeface="Arial"/><a:buChar char="–"/><a:defRPr sz="2800"/></a:lvl2pPr>
+            </p:bodyStyle>
+            <p:otherStyle>
+              <a:lvl1pPr marL="0"><a:defRPr sz="1800"/></a:lvl1pPr>
+              <a:lvl2pPr marL="457200"><a:defRPr sz="1800"/></a:lvl2pPr>
+            </p:otherStyle>
+          </p:txStyles>
+        </p:sldMaster>"#
+            .as_bytes(),
+    );
+    add_file(
+        &mut zip,
+        "ppt/theme/theme1.xml",
+        br#"<a:theme xmlns:a="a" name="Office Theme"><a:themeElements>
+          <a:clrScheme name="Office">
+            <a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>
+            <a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>
+            <a:dk2><a:srgbClr val="1F497D"/></a:dk2><a:lt2><a:srgbClr val="EEECE1"/></a:lt2>
+            <a:accent1><a:srgbClr val="4F81BD"/></a:accent1>
+          </a:clrScheme>
+          <a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/></a:minorFont></a:fontScheme>
+        </a:themeElements></a:theme>"#,
+    );
+    zip.finish().unwrap();
+    output.into_inner()
+}
+
+#[test]
+fn typeless_content_placeholder_uses_body_style_not_layout_prompt_levels() {
+    let document =
+        pptx_core::parse_presentation(&default_template_pptx(), &ParseLimits::default()).unwrap();
+    let SlideNode::Shape { paragraphs, .. } = &document.slides[0].nodes[0] else {
+        panic!("expected content placeholder")
+    };
+    assert_eq!(paragraphs.len(), 4);
+    for paragraph in &paragraphs[..3] {
+        // Every plain paragraph is level 0: it must not inherit the lvl of the
+        // layout's prompt paragraph at the same index (no stair-stepping).
+        assert_eq!(paragraph.level, None, "{:?}", paragraph.runs[0].text);
+        assert_eq!(paragraph.margin_left_emu, Some(342_900));
+        assert_eq!(paragraph.indent_emu, Some(-342_900));
+        let bullet = paragraph.bullet.as_ref().expect("bodyStyle bullet");
+        assert_eq!(bullet.value.as_deref(), Some("\u{2022}"));
+        assert_eq!(paragraph.runs[0].font_size_pt, Some(32.0));
+    }
+    // An explicit lvl still selects the matching bodyStyle level.
+    assert_eq!(paragraphs[3].level, Some(1));
+    assert_eq!(paragraphs[3].margin_left_emu, Some(742_950));
+    assert_eq!(
+        paragraphs[3]
+            .bullet
+            .as_ref()
+            .and_then(|b| b.value.as_deref()),
+        Some("\u{2013}")
+    );
+    assert_eq!(paragraphs[3].runs[0].font_size_pt, Some(28.0));
+}
+
+#[test]
+fn builtin_medium_style_2_table_style_applies_when_table_styles_part_is_empty() {
+    let document =
+        pptx_core::parse_presentation(&default_template_pptx(), &ParseLimits::default()).unwrap();
+    let SlideNode::Table { rows, .. } = &document.slides[0].nodes[1] else {
+        panic!("expected table")
+    };
+    let fill = |row: usize| match &rows[row][0].fill {
+        Some(FillStyle::Solid { color }) => color.value.clone(),
+        other => panic!("row {row}: expected solid fill, got {other:?}"),
+    };
+    assert_eq!(fill(0), "#4F81BD", "header row takes the solid accent");
+    assert_eq!(fill(1), "#D0D8E8", "band1H takes a 40% accent tint");
+    assert_eq!(
+        fill(2),
+        "#E9EDF4",
+        "band2H falls back to the 20% wholeTbl tint"
+    );
+
+    let header = &rows[0][0].paragraphs[0].runs[0];
+    assert_eq!(header.bold, Some(true));
+    assert_eq!(header.color.as_ref().unwrap().value, "#FFFFFF");
+    let body = &rows[1][0].paragraphs[0].runs[0];
+    assert_eq!(body.bold, None);
+    assert_eq!(body.color.as_ref().unwrap().value, "#000000");
+
+    for side in ["top", "right", "bottom", "left"] {
+        let border = rows[1][0]
+            .borders
+            .get(side)
+            .unwrap_or_else(|| panic!("missing {side} border"));
+        assert_eq!(border.color.as_ref().unwrap().value, "#FFFFFF");
+    }
+    let header_bottom = rows[0][0].borders.get("bottom").unwrap().width.unwrap();
+    let body_bottom = rows[1][0].borders.get("bottom").unwrap().width.unwrap();
+    assert!(
+        header_bottom > body_bottom,
+        "firstRow has a 3pt bottom rule"
+    );
+}

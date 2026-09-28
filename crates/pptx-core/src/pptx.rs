@@ -2,6 +2,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, HashMap},
     io::{Cursor, Read},
+    sync::OnceLock,
 };
 
 use quick_xml::{
@@ -1789,21 +1790,14 @@ fn parse_paragraph_style(properties: Option<&XmlNode>) -> ParagraphStyle {
     }
 }
 
-fn fallback_paragraph_properties(
-    text_body: Option<&XmlNode>,
-    paragraph_index: usize,
-    level: usize,
-) -> Option<&XmlNode> {
-    let text_body = text_body?;
-    text_body
-        .children_named("p")
-        .nth(paragraph_index)
-        .and_then(|paragraph| paragraph.child("pPr"))
-        .or_else(|| {
-            text_body
-                .child("lstStyle")
-                .and_then(|style| style.child(&format!("lvl{}pPr", level.saturating_add(1))))
-        })
+// Layout and master placeholders inherit through their `a:lstStyle` only.
+// Their `a:p` children are prompt text ("Click to edit Master text styles",
+// "Second level", ...), not styles: paragraph N of a slide must not pick up
+// the `lvl`/`marL` of prompt paragraph N.
+fn fallback_paragraph_properties(text_body: Option<&XmlNode>, level: usize) -> Option<&XmlNode> {
+    text_body?
+        .child("lstStyle")
+        .and_then(|style| style.child(&format!("lvl{}pPr", level.saturating_add(1))))
 }
 
 fn style_level_properties(style: Option<&XmlNode>, level: usize) -> Option<&XmlNode> {
@@ -1833,28 +1827,17 @@ fn parse_text_paragraphs(
     };
     text_body
         .children_named("p")
-        .enumerate()
-        .map(|(paragraph_index, paragraph)| {
+        .map(|paragraph| {
             let own_properties = paragraph.child("pPr");
             let level = own_properties
                 .and_then(|properties| properties.attr("lvl"))
                 .and_then(|value| value.parse::<usize>().ok())
-                .or_else(|| {
-                    layout_text_body
-                        .and_then(|body| {
-                            fallback_paragraph_properties(Some(body), paragraph_index, 0)
-                        })
-                        .and_then(|properties| properties.attr("lvl"))
-                        .and_then(|value| value.parse::<usize>().ok())
-                })
                 .unwrap_or(0);
             let master_style_properties = style_level_properties(master_text_style, level);
             let presentation_style_properties =
                 style_level_properties(context.presentation_text_style, level);
-            let master_properties =
-                fallback_paragraph_properties(master_text_body, paragraph_index, level);
-            let layout_properties =
-                fallback_paragraph_properties(layout_text_body, paragraph_index, level);
+            let master_properties = fallback_paragraph_properties(master_text_body, level);
+            let layout_properties = fallback_paragraph_properties(layout_text_body, level);
             let paragraph_style = parse_paragraph_style(presentation_style_properties)
                 .overlay(parse_paragraph_style(master_style_properties))
                 .overlay(parse_paragraph_style(master_properties))
@@ -2099,7 +2082,10 @@ fn find_placeholder<'a>(root: &'a XmlNode, source: &XmlNode) -> Option<&'a XmlNo
 
 fn master_text_style<'a>(master: Option<&'a XmlNode>, source: &XmlNode) -> Option<&'a XmlNode> {
     let styles = master?.child("txStyles")?;
-    match placeholder_key(source).and_then(|key| key.kind) {
+    // `p:ph@type` defaults to "obj" (ECMA-376 CT_Placeholder), so a typeless
+    // placeholder such as python-pptx's `<p:ph idx="1"/>` content placeholder
+    // takes the body style. Only non-placeholder shapes use otherStyle.
+    match placeholder_key(source).map(|key| key.kind.unwrap_or_else(|| "body".to_owned())) {
         Some(kind) if kind == "title" => styles.child("titleStyle"),
         Some(kind) if kind == "body" => styles.child("bodyStyle"),
         _ => styles.child("otherStyle"),
@@ -2515,17 +2501,92 @@ fn parse_image_node(
     }
 }
 
+/// PowerPoint's predefined table styles are identified by GUID and are NOT
+/// written to `ppt/tableStyles.xml` unless the author customised them, so a
+/// deck produced by python-pptx (or PowerPoint itself) often references a style
+/// the package does not define. Only the default style family is built in for
+/// now; each entry is `(styleId, styleName, accent scheme colour)`.
+const BUILTIN_MEDIUM_STYLE_2: &[(&str, &str, &str)] = &[(
+    "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}",
+    "Medium Style 2 - Accent 1",
+    "accent1",
+)];
+
+/// ECMA-376 / PowerPoint definition of the "Medium Style 2" family for one
+/// accent: a 20 % tint body, 40 % tint odd bands, solid-accent header and
+/// first/last column with bold light text, and light (lt1) 1 pt grid lines.
+fn medium_style_2_xml(style_id: &str, style_name: &str, accent: &str) -> String {
+    let line = |width: u32| {
+        format!(
+            r#"<a:ln w="{width}" cmpd="sng"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln>"#
+        )
+    };
+    let thin = line(12_700);
+    let thick = line(38_100);
+    let tint = |value: u32| {
+        format!(
+            r#"<a:fill><a:solidFill><a:schemeClr val="{accent}"><a:tint val="{value}"/></a:schemeClr></a:solidFill></a:fill>"#
+        )
+    };
+    let solid =
+        format!(r#"<a:fill><a:solidFill><a:schemeClr val="{accent}"/></a:solidFill></a:fill>"#);
+    let text = |bold: &str, color: &str| {
+        format!(
+            r#"<a:tcTxStyle{bold}><a:fontRef idx="minor"><a:prstClr val="black"/></a:fontRef><a:schemeClr val="{color}"/></a:tcTxStyle>"#
+        )
+    };
+    let emphasis = text(r#" b="on""#, "lt1");
+    format!(
+        r#"<a:tblStyle xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" styleId="{style_id}" styleName="{style_name}"><a:wholeTbl>{whole_text}<a:tcStyle><a:tcBdr><a:left>{thin}</a:left><a:right>{thin}</a:right><a:top>{thin}</a:top><a:bottom>{thin}</a:bottom><a:insideH>{thin}</a:insideH><a:insideV>{thin}</a:insideV></a:tcBdr>{tint20}</a:tcStyle></a:wholeTbl><a:band1H><a:tcStyle><a:tcBdr/>{tint40}</a:tcStyle></a:band1H><a:band2H><a:tcStyle><a:tcBdr/></a:tcStyle></a:band2H><a:band1V><a:tcStyle><a:tcBdr/>{tint40}</a:tcStyle></a:band1V><a:band2V><a:tcStyle><a:tcBdr/></a:tcStyle></a:band2V><a:lastCol>{emphasis}<a:tcStyle><a:tcBdr/>{solid}</a:tcStyle></a:lastCol><a:firstCol>{emphasis}<a:tcStyle><a:tcBdr/>{solid}</a:tcStyle></a:firstCol><a:lastRow>{emphasis}<a:tcStyle><a:tcBdr><a:top>{thick}</a:top></a:tcBdr>{solid}</a:tcStyle></a:lastRow><a:firstRow>{emphasis}<a:tcStyle><a:tcBdr><a:bottom>{thick}</a:bottom></a:tcBdr>{solid}</a:tcStyle></a:firstRow></a:tblStyle>"#,
+        whole_text = text("", "dk1"),
+        tint20 = tint(20_000),
+        tint40 = tint(40_000),
+    )
+}
+
+fn builtin_table_style(style_id: &str) -> Option<&'static XmlNode> {
+    static STYLES: OnceLock<Vec<XmlNode>> = OnceLock::new();
+    STYLES
+        .get_or_init(|| {
+            BUILTIN_MEDIUM_STYLE_2
+                .iter()
+                .filter_map(|(id, name, accent)| {
+                    parse_xml_tree(
+                        medium_style_2_xml(id, name, accent).as_bytes(),
+                        &ParseLimits::default(),
+                        "built-in table style",
+                    )
+                    .ok()
+                })
+                .collect()
+        })
+        .iter()
+        .find(|style| {
+            style
+                .attr("styleId")
+                .is_some_and(|id| id.eq_ignore_ascii_case(style_id))
+        })
+}
+
 fn selected_table_style<'a>(table: &XmlNode, styles: Option<&'a XmlNode>) -> Option<&'a XmlNode> {
-    let styles = styles?;
     let requested = table
         .child("tblPr")
         .and_then(|properties| properties.child("tableStyleId"))
         .map(XmlNode::text_content)
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| styles.attr("def").map(str::to_owned))?;
+        .or_else(|| {
+            styles
+                .and_then(|styles| styles.attr("def"))
+                .map(str::to_owned)
+        })?;
+    let requested = requested.trim();
     styles
-        .children_named("tblStyle")
-        .find(|style| style.attr("styleId") == Some(requested.trim()))
+        .and_then(|styles| {
+            styles
+                .children_named("tblStyle")
+                .find(|style| style.attr("styleId") == Some(requested))
+        })
+        .or_else(|| builtin_table_style(requested))
 }
 
 fn table_flag(table: &XmlNode, name: &str) -> bool {
