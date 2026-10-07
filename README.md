@@ -22,8 +22,11 @@ pnpm install
 pnpm dev
 ```
 
-Open [http://localhost:4173](http://localhost:4173). The dev task generates a deterministic
-two-slide fixture automatically, or you can drop any `.ppt` or `.pptx` file onto the viewer.
+Open [http://localhost:4173](http://localhost:4173). The dev task rebuilds the Rust/Wasm
+parser, presentation model, and React viewer before starting Vite, so it uses the current
+branch's code. It also refreshes Vite's dependency cache and generates a deterministic
+two-slide fixture automatically. You can drop any `.ppt` or `.pptx` file onto the viewer.
+Restart `pnpm dev` after changing Rust code to rebuild the parser.
 
 ## Use the package
 

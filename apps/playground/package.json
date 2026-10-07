@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "predev": "pnpm --dir ../.. fixtures:generate",
-    "dev": "vite",
+    "dev": "vite --force",
     "prebuild": "pnpm --dir ../.. fixtures:generate",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
