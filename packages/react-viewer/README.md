@@ -118,6 +118,16 @@ the parser worker. A `Response` is supported on the main thread because it canno
 reliably to a worker. `initWasm()` optionally accepts the same source when eager initialization
 is useful.
 
+## Examples
+
+See `@extend-ai/react-pptx` in action in these live [Extend UI](https://www.extend.ai/ui) examples. Click a screenshot to open the demo and integration docs.
+
+### [PowerPoint Viewer](https://www.extend.ai/ui/docs/components/pptx-viewer)
+
+Explore slide navigation, zoom, and presentation previews.
+
+[![PowerPoint viewer with a presentation slide and navigation controls](https://raw.githubusercontent.com/extend-hq/react-pptx/main/docs/readme-assets/extend-ui-pptx-viewer.png)](https://www.extend.ai/ui/docs/components/pptx-viewer)
+
 ## Fonts
 
 Fonts embedded in a `.pptx` are decoded by the Rust parser and registered before the first
