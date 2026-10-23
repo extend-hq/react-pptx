@@ -17,6 +17,10 @@ and a virtualized HTML/SVG rendering engine.
 
 ## Run the playground
 
+Use Node.js 24.22.1 (pinned in `.nvmrc`) and pnpm 9.15.0. Node.js 22.23.4 or
+newer within the 22.x release line is also supported. Dependency installation
+rejects older runtimes.
+
 ```bash
 pnpm install
 pnpm dev
