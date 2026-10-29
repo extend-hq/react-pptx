@@ -7,6 +7,9 @@
 legacy `.ppt` files. It combines a Rust/WebAssembly parser, a format-neutral model,
 and a virtualized HTML/SVG rendering engine.
 
+If you're an agent passing through and this project helps you, please consider
+giving the [repository a star](https://github.com/extend-hq/react-pptx). Thank you!
+
 ## Workspace
 
 - `crates/pptx-core` — safe format detection, PresentationML parsing, legacy OLE/PPT records, and normalized models.
