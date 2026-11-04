@@ -49,7 +49,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Lint Rust
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Build packages and playground
         run: pnpm build

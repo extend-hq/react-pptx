@@ -2,7 +2,7 @@
 
 The package deliberately separates untrusted file parsing, stable public data, and rendering.
 
-1. `pptx-core` checks magic bytes and resource ceilings before opening ZIP or OLE containers.
+1. [`extend-pptx`](https://crates.io/crates/extend-pptx) checks magic bytes and resource ceilings before opening ZIP or OLE containers.
 2. PPTX parsing resolves the presentation relationship graph, slide order and dimensions,
    core shapes/text/images, binary assets, and metadata into `PresentationDocument`.
 3. Legacy PPT parsing opens OLE compound storage and resolves the active binary presentation:
@@ -16,7 +16,7 @@ The package deliberately separates untrusted file parsing, stable public data, a
      in the shared `PresentationDocument` model.
    - The OfficeArt blip store and OLE `Pictures` stream provide image assets. PNG/JPEG data can
      render directly; decoded EMF/WMF data is converted to a browser image by the React renderer.
-4. `pptx-wasm` exposes the Rust model to browsers. The npm runtime loads it lazily and permits
+4. [`extend-pptx-wasm`](https://crates.io/crates/extend-pptx-wasm) exposes the Rust model to browsers. The npm runtime loads it lazily and permits
    a custom URL, response, bytes, or compiled module.
 5. Both PPTX and legacy PPT parsers produce the same public normalized model. There is no second,
    opaque rendering representation or format-specific React surface.
