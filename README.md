@@ -1,6 +1,7 @@
 # react-pptx
 
 [![npm version](https://img.shields.io/npm/v/@extend-ai/react-pptx.svg)](https://www.npmjs.com/package/@extend-ai/react-pptx)
+[![Monthly npm downloads](https://img.shields.io/npm/dm/@extend-ai/react-pptx.svg)](https://www.npmjs.com/package/@extend-ai/react-pptx)
 [![CI](https://github.com/extend-hq/react-pptx/actions/workflows/ci.yml/badge.svg)](https://github.com/extend-hq/react-pptx/actions/workflows/ci.yml)
 
 `@extend-ai/react-pptx` is a browser-native React viewer for PowerPoint `.pptx` and
