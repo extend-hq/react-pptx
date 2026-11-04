@@ -65,45 +65,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "extend-office-charts"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9ee00cce14edabf1c29f03013b6fb4acb2355b11c253d0bb1a1a61e9cfec2be"
-dependencies = [
- "roxmltree",
- "serde",
-]
-
-[[package]]
-name = "extend-pptx"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e0fbf213e49d48a39f4b370761f4db3200ee5236e67661b0ca1caa22da5a193"
-dependencies = [
- "cfb",
- "extend-office-charts",
- "flate2",
- "quick-xml",
- "serde",
- "serde_bytes",
- "serde_json",
- "thiserror",
- "zip",
-]
-
-[[package]]
-name = "extend-pptx-wasm"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "035e611e6e1bd1da7d14bb2b7f28410c447dd6fc17e92b6a9cc1860642374b84"
-dependencies = [
- "extend-pptx",
- "serde",
- "serde-wasm-bindgen",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -279,8 +240,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "react-pptx-runtime"
 version = "0.1.0"
 dependencies = [
- "extend-pptx",
- "extend-pptx-wasm",
+ "rust-pptx",
+ "rust-pptx-wasm",
 ]
 
 [[package]]
@@ -288,6 +249,45 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
+
+[[package]]
+name = "rust-office-charts"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "544a78d493976e06b684f3f93b641e7ac4aefae6c02fb2f7e10228bbe8de2d01"
+dependencies = [
+ "roxmltree",
+ "serde",
+]
+
+[[package]]
+name = "rust-pptx"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "862d38d11fd0050df64b0fba21fa21c67ee207a3da8ca97bea2a410ef309fd97"
+dependencies = [
+ "cfb",
+ "flate2",
+ "quick-xml",
+ "rust-office-charts",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "thiserror",
+ "zip",
+]
+
+[[package]]
+name = "rust-pptx-wasm"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc4573ae3aae11c2a7c3ba79decdd67d1aa45502476d86b6fc3eb4eaa9104584"
+dependencies = [
+ "rust-pptx",
+ "serde",
+ "serde-wasm-bindgen",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "rustversion"

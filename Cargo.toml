@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 path = "packages/wasm/src/bridge.rs"
 
 [dependencies]
-extend-pptx-wasm = "=0.1.0"
+rust-pptx-wasm = "=0.1.0"
 
 [dev-dependencies]
-extend-pptx = "=0.1.0"
+rust-pptx = "=0.1.0"
 
 [profile.release]
 opt-level = "z"
