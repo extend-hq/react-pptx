@@ -10,6 +10,7 @@ import type { ChartNode, PresentationTheme } from '@extend-ai/react-pptx-model';
 import { buildPptxChart, buildThemePaletteFromPresentationTheme } from './chart-model';
 import { MemoChartSvg } from './chart-renderer';
 import { getRegionMapAtlas, loadRegionMapAtlas } from './region-map-data';
+import { mountSharedChart } from './shared-chart-svg';
 import type { XlsxChart } from './chart-types';
 
 /** Neutral light palette matching react-xlsx viewer chrome defaults. */
@@ -38,6 +39,12 @@ export function renderChartInto(
   theme: PresentationTheme | undefined,
 ): boolean {
   try {
+    if (
+      node.chartSvg &&
+      mountSharedChart(container, node.chartSvg, node.title ?? node.name ?? 'Chart')
+    ) {
+      return true;
+    }
     const themePalette = buildThemePaletteFromPresentationTheme(theme);
     const chart = buildPptxChart(node, themePalette);
     const render = () => {
