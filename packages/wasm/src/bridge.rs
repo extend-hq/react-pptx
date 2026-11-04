@@ -1,1 +1,1 @@
-pub use pptx_wasm::*;
+pub use rust_pptx_wasm::*;

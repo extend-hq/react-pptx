@@ -1,5 +1,9 @@
 # @extend-ai/react-pptx
 
+## 0.2.3
+
+- Use the Rust Office crates by Extend and refresh the bundled WebAssembly.
+
 ## 0.2.2
 
 ### Patch Changes
