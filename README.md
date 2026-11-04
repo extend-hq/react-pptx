@@ -12,8 +12,8 @@ giving the [repository a star](https://github.com/extend-hq/react-pptx). Thank y
 
 ## Workspace
 
-- `crates/pptx-core` — safe format detection, PresentationML parsing, legacy OLE/PPT records, and normalized models.
-- `crates/pptx-wasm` / `packages/wasm` — lazy browser Wasm runtime.
+- [`extend-office`](https://github.com/extend-hq/extend-office) maintains the published Rust parser (`extend-pptx`), chart renderer (`extend-office-charts`), and browser bindings (`extend-pptx-wasm`).
+- `packages/wasm` builds the pinned Rust bindings for the lazy browser runtime.
 - `packages/presentation-model` — presentation types bundled into the public viewer.
 - `packages/react-viewer` — the published React viewer and controller API.
 - `apps/playground` — interactive upload, search, navigation, zoom, diagnostics, and fidelity test surface.
@@ -31,9 +31,9 @@ pnpm dev
 
 Open [http://localhost:4173](http://localhost:4173). The dev task rebuilds the Rust/Wasm
 parser, presentation model, and React viewer before starting Vite, so it uses the current
-branch's code. It also refreshes Vite's dependency cache and generates a deterministic
+branch's locked dependencies. It also refreshes Vite's dependency cache and generates a deterministic
 two-slide fixture automatically. You can drop any `.ppt` or `.pptx` file onto the viewer.
-Restart `pnpm dev` after changing Rust code to rebuild the parser.
+Restart `pnpm dev` after upgrading the Rust parser to rebuild the browser runtime.
 
 ## Use the package
 
@@ -93,7 +93,7 @@ The private PowerPoint-oracle corpus uses `pnpm powerpoint-oracle:validate` and
 
 ## Fidelity boundary
 
-PPTX parsing and rendering are owned by this repository. The Rust/Wasm parser resolves
+The Rust/Wasm parser from `extend-office` resolves
 PresentationML packages into the public normalized model, and the React package renders that
 model with its own HTML/SVG slide surface. Shapes, styled text, images, groups, tables, charts,
 backgrounds, transforms, and theme colors all travel through the same inspectable data model.

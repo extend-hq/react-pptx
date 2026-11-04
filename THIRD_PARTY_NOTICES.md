@@ -1,10 +1,13 @@
 # Third-party notices
 
-## Chart rendering stack (vendored from @extend-ai/react-xlsx)
+## PowerPoint parsing and chart rendering
 
-The chart renderer and chart model builder in `src/charts/` are vendored from
-[`@extend-ai/react-xlsx`](https://github.com/extend-hq/react-xlsx) (MIT) so
-PowerPoint charts render with the same styles and colors as Excel charts.
+The browser runtime bundles the PowerPoint parser and chart renderer from
+[extend-office](https://github.com/extend-hq/extend-office). Its MIT license
+is included in the published package at `THIRD_PARTY_LICENSES/extend-office.txt`.
+
+The React chart renderer and chart model builder used for fallback rendering
+are vendored from [`@extend-ai/react-xlsx`](https://github.com/extend-hq/react-xlsx) (MIT).
 
 The chart libraries `d3-scale`, `d3-shape`, `d3-hierarchy`, `d3-geo` (ISC,
 Copyright Mike Bostock), `topojson-client` (ISC), and

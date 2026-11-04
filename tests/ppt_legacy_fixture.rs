@@ -1,6 +1,6 @@
 use pptx_core::{parse_presentation, FillStyle, ParseLimits, PresentationFormat, SlideNode};
 
-const LEGACY_DECK: &[u8] = include_bytes!("../../../tests/fixtures/legacy/file-example-250kb.ppt");
+const LEGACY_DECK: &[u8] = include_bytes!("fixtures/legacy/file-example-250kb.ppt");
 
 fn document_text(document: &pptx_core::PresentationDocument) -> String {
     document

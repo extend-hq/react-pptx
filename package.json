@@ -20,7 +20,7 @@
     "test": "pnpm test:unit && pnpm test:oracle && pnpm test:rust",
     "test:unit": "vitest run",
     "test:oracle": "node --test tests/fidelity/*.test.mjs",
-    "test:rust": "cargo test --workspace",
+    "test:rust": "cargo test --locked",
     "test:visual": "playwright test",
     "fixtures:generate": "node scripts/generate-test-fixtures.mjs",
     "powerpoint-oracle:validate": "node scripts/powerpoint-oracle/validate-manifest.mjs",

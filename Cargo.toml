@@ -1,27 +1,25 @@
-[workspace]
-members = ["crates/pptx-core", "crates/pptx-wasm"]
-resolver = "2"
-
-[workspace.package]
+[package]
+name = "react-pptx-runtime"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+publish = false
 
-[workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_bytes = "0.11"
-thiserror = "2"
-quick-xml = "0.37"
-zip = { version = "9", default-features = false, features = ["deflate"] }
-cfb = "0.10"
-flate2 = "1"
-wasm-bindgen = "0.2"
-js-sys = "0.3"
-serde-wasm-bindgen = "0.6"
+[lib]
+crate-type = ["cdylib"]
+path = "packages/wasm/src/bridge.rs"
+
+[dependencies]
+extend-pptx-wasm = "=0.1.0"
+
+[dev-dependencies]
+extend-pptx = "=0.1.0"
 
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
