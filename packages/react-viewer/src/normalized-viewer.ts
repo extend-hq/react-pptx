@@ -3,6 +3,7 @@ import type {
   ImageEffects,
   LineStyle,
   PresentationAsset,
+  PicturePaintBounds,
   PresentationDocument,
   PresentationSearchResult,
   PresentationTheme,
@@ -670,6 +671,38 @@ function allowsTextOverflow(value: string | undefined): boolean {
   return value === undefined || /overflow/i.test(value);
 }
 
+function applyPicturePaintBounds(
+  image: HTMLImageElement,
+  bounds?: PicturePaintBounds,
+  allowZeroLayout = false,
+): void {
+  if (
+    !bounds ||
+    ![
+      bounds.xPx,
+      bounds.yPx,
+      bounds.widthPx,
+      bounds.heightPx,
+      bounds.layoutWidthPx,
+      bounds.layoutHeightPx,
+    ].every(Number.isFinite) ||
+    bounds.widthPx <= 0 ||
+    bounds.heightPx <= 0 ||
+    (allowZeroLayout ? bounds.layoutWidthPx < 0 : bounds.layoutWidthPx <= 0) ||
+    (allowZeroLayout ? bounds.layoutHeightPx < 0 : bounds.layoutHeightPx <= 0)
+  )
+    return;
+  const width = bounds.layoutWidthPx || 1;
+  const height = bounds.layoutHeightPx || 1;
+  image.style.position = 'absolute';
+  image.style.left = `${(bounds.xPx / width) * 100}%`;
+  image.style.top = `${(bounds.yPx / height) * 100}%`;
+  image.style.width = `${(bounds.widthPx / width) * 100}%`;
+  image.style.height = `${(bounds.heightPx / height) * 100}%`;
+  image.style.maxWidth = 'none';
+  image.style.maxHeight = 'none';
+}
+
 function applyCroppedImage(
   image: HTMLImageElement,
   crop: { top: number; right: number; bottom: number; left: number },
@@ -1317,24 +1350,33 @@ export class NormalizedPresentationViewer {
 
   private createNode(
     node: SlideNode,
-    coordinate: { x: number; y: number; width: number; height: number },
+    coordinate: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      scaleX?: number;
+      scaleY?: number;
+    },
   ): HTMLElement {
+    const paintedPicture = node.type === 'image' && !!node.pictureSvg;
+    const paintedShape = node.type === 'shape' && !!node.shapeSvg;
     const href = safeHyperlink(node.hyperlink);
     const element = document.createElement(href ? 'a' : 'div');
     element.dataset.rpvNodeId = node.id;
     element.style.position = 'absolute';
     element.style.left = `${((node.transform.x - coordinate.x) / coordinate.width) * 100}%`;
     element.style.top = `${((node.transform.y - coordinate.y) / coordinate.height) * 100}%`;
-    element.style.width = `${(node.transform.width / coordinate.width) * 100}%`;
-    element.style.height = `${(node.transform.height / coordinate.height) * 100}%`;
+    element.style.width = `${((paintedShape && node.transform.width === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleX || 1) : node.transform.width) / coordinate.width) * 100}%`;
+    element.style.height = `${((paintedShape && node.transform.height === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleY || 1) : node.transform.height) / coordinate.height) * 100}%`;
     element.style.boxSizing = 'border-box';
     const transforms = [`rotate(${node.transform.rotation ?? 0}deg)`];
     if (node.transform.flipHorizontal) transforms.push('scaleX(-1)');
     if (node.transform.flipVertical) transforms.push('scaleY(-1)');
-    element.style.transform = transforms.join(' ');
+    element.style.transform = paintedPicture || paintedShape ? '' : transforms.join(' ');
     element.style.transformOrigin = 'center';
     if (node.hidden) element.hidden = true;
-    if (node.opacity !== undefined) element.style.opacity = String(node.opacity);
+    if (!paintedPicture && node.opacity !== undefined) element.style.opacity = String(node.opacity);
     if (node.altText) element.setAttribute('aria-label', node.altText);
     if (href && element instanceof HTMLAnchorElement) {
       element.href = href;
@@ -1346,7 +1388,21 @@ export class NormalizedPresentationViewer {
 
     if (node.type === 'shape') {
       const presetPath = normalizedPresetGeometryPath(node.geometry.preset);
-      if (node.geometry.path || presetPath) {
+      if (node.shapeSvg) {
+        const paint = document.createElement('img');
+        paint.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(node.shapeSvg)}`;
+        paint.alt = '';
+        paint.setAttribute('aria-hidden', 'true');
+        paint.style.position = 'absolute';
+        paint.style.left = '0';
+        paint.style.top = '0';
+        paint.style.width = '100%';
+        paint.style.height = '100%';
+        paint.style.objectFit = 'fill';
+        paint.style.pointerEvents = 'none';
+        applyPicturePaintBounds(paint, node.paintBounds, true);
+        element.append(paint);
+      } else if (node.geometry.path || presetPath) {
         element.append(this.createCustomGeometry(node, node.geometry.path ?? presetPath));
       } else {
         this.applyFill(element, node.fill, node.id);
@@ -1363,10 +1419,12 @@ export class NormalizedPresentationViewer {
         element.style.display = 'flex';
         element.style.flexDirection = 'column';
       }
-      element.style.overflowX =
+      const horizontalOverflow =
         shapeAutofit || allowsTextOverflow(node.horizontalOverflow) ? 'visible' : 'clip';
-      element.style.overflowY =
+      const verticalOverflow =
         shapeAutofit || allowsTextOverflow(node.verticalOverflow) ? 'visible' : 'clip';
+      element.style.overflowX = paintedShape ? 'visible' : horizontalOverflow;
+      element.style.overflowY = paintedShape ? 'visible' : verticalOverflow;
       if (node.paragraphs) {
         const textBody = document.createElement('div');
         textBody.dataset.rpvTextBody = '';
@@ -1414,19 +1472,41 @@ export class NormalizedPresentationViewer {
             : {}),
         });
         textBody.append(textContent);
-        element.append(textBody);
+        if (paintedShape) {
+          const textFrame = document.createElement('div');
+          textFrame.style.position = growsToFitText ? 'relative' : 'absolute';
+          if (!growsToFitText) textFrame.style.inset = '0';
+          textFrame.style.width = '100%';
+          textFrame.style.height = growsToFitText ? 'auto' : '100%';
+          if (growsToFitText) textFrame.style.flex = '1 0 auto';
+          textFrame.style.transform = transforms.join(' ');
+          textFrame.style.transformOrigin = 'center';
+          textFrame.style.overflowX = horizontalOverflow;
+          textFrame.style.overflowY = verticalOverflow;
+          textFrame.append(textBody);
+          element.append(textFrame);
+        } else {
+          element.append(textBody);
+        }
       }
     } else if (node.type === 'image') {
       const image = document.createElement('img');
-      this.applyAsset(node.assetId, (url) => (image.src = url), node.id);
       image.alt = node.altText ?? node.name ?? '';
       image.style.display = 'block';
       image.style.width = '100%';
       image.style.height = '100%';
-      image.style.objectFit = node.preserveAspectRatio === false ? 'fill' : 'contain';
-      element.style.overflow = 'hidden';
-      if (node.crop) applyCroppedImage(image, node.crop);
-      this.applyImageEffects(image, node.effects, element);
+      if (node.pictureSvg) {
+        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(node.pictureSvg)}`;
+        image.style.objectFit = 'fill';
+        applyPicturePaintBounds(image, node.paintBounds);
+        element.style.overflow = 'visible';
+      } else {
+        this.applyAsset(node.assetId, (url) => (image.src = url), node.id);
+        image.style.objectFit = node.preserveAspectRatio === false ? 'fill' : 'contain';
+        element.style.overflow = 'hidden';
+        if (node.crop) applyCroppedImage(image, node.crop);
+        this.applyImageEffects(image, node.effects, element);
+      }
       element.append(image);
     } else if (node.type === 'group') {
       const childCoordinate = node.childTransform ?? {
@@ -1435,7 +1515,16 @@ export class NormalizedPresentationViewer {
         width: node.transform.width,
         height: node.transform.height,
       };
-      for (const child of node.children) element.append(this.createNode(child, childCoordinate));
+      const scaleX = ((coordinate.scaleX ?? 1) * node.transform.width) / childCoordinate.width;
+      const scaleY = ((coordinate.scaleY ?? 1) * node.transform.height) / childCoordinate.height;
+      for (const child of node.children)
+        element.append(
+          this.createNode(child, {
+            ...childCoordinate,
+            scaleX: Number.isFinite(scaleX) && scaleX > 0 ? scaleX : (coordinate.scaleX ?? 1),
+            scaleY: Number.isFinite(scaleY) && scaleY > 0 ? scaleY : (coordinate.scaleY ?? 1),
+          }),
+        );
     } else if (node.type === 'table') {
       const table = document.createElement('table');
       table.style.width = '100%';

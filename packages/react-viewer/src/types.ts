@@ -358,6 +358,7 @@ export interface ReactPptxViewerProps extends Omit<
 }
 
 export type {
+  PicturePaintBounds,
   PresentationAsset,
   PresentationDocument,
   PresentationEmbeddedFont,

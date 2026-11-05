@@ -189,6 +189,9 @@ export interface BaseSlideNode {
 
 export interface ShapeNode extends BaseSlideNode {
   type: 'shape';
+  shapeSvg?: string;
+  paintBounds?: PicturePaintBounds;
+  sourceXml?: string;
   geometry: { preset?: string; path?: string; adjustments?: Record<string, number> };
   fill?: FillStyle;
   line?: LineStyle;
@@ -207,12 +210,24 @@ export interface ShapeNode extends BaseSlideNode {
   spaceFirstLastParagraph?: boolean;
 }
 
+export interface PicturePaintBounds {
+  xPx: number;
+  yPx: number;
+  widthPx: number;
+  heightPx: number;
+  layoutWidthPx: number;
+  layoutHeightPx: number;
+}
+
 export interface ImageNode extends BaseSlideNode {
   type: 'image';
   assetId: string;
   crop?: { top: number; right: number; bottom: number; left: number };
   preserveAspectRatio?: boolean;
   effects?: ImageEffects;
+  pictureSvg?: string;
+  paintBounds?: PicturePaintBounds;
+  sourceXml?: string;
 }
 
 export interface GroupNode extends BaseSlideNode {
@@ -283,6 +298,7 @@ export type SlideNode =
   ShapeNode | ImageNode | GroupNode | TableNode | ChartNode | MediaNode | UnknownNode;
 
 export interface PresentationTheme {
+  formatSchemeXml?: string;
   id: string;
   name?: string;
   colors: Record<string, string>;

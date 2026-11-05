@@ -2,9 +2,17 @@
 
 ## PowerPoint parsing and chart rendering
 
-The browser runtime bundles the PowerPoint parser and chart renderer from
-[rust-office](https://github.com/extend-hq/rust-office). Its MIT license
-is included in the published package at `THIRD_PARTY_LICENSES/rust-office.txt`.
+The browser runtime bundles the PowerPoint parser, shared OfficeArt renderer,
+and chart renderer from [rust-office](https://github.com/extend-hq/rust-office).
+Their MIT license is included in the published package at
+`THIRD_PARTY_LICENSES/extend-office.txt`.
+
+The shared OfficeArt renderer includes preset geometry definitions from
+[Apache POI](https://poi.apache.org/) under the Apache License 2.0.
+The published package includes the upstream license, notice, and source revision
+information at `THIRD_PARTY_LICENSES/apache-poi-LICENSE.txt`,
+`THIRD_PARTY_LICENSES/apache-poi-NOTICE.txt`, and
+`THIRD_PARTY_LICENSES/apache-poi-SOURCE.md`.
 
 The React chart renderer and chart model builder used for fallback rendering
 are vendored from [`@extend-ai/react-xlsx`](https://github.com/extend-hq/react-xlsx) (MIT).
