@@ -144,6 +144,7 @@ export async function parsePresentation(
   const parsingStartedAt = performanceNow();
   const nativeDocument = await parseWithWasm(bytes, {
     formatHint: format,
+    ...(options.include3dModels !== undefined ? { include3dModels: options.include3dModels } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
   });
   options.onPerformanceMeasurement?.(performanceMeasurement('wasm-parsing', parsingStartedAt));
@@ -166,4 +167,5 @@ export async function parsePresentation(
 
 export const presentationParsingDefaults = Object.freeze({
   maxInputBytes: DEFAULT_MAX_INPUT_BYTES,
+  include3dModels: false,
 });

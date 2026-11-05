@@ -189,6 +189,12 @@ return (
 `usePptxViewer` exposes the reactive navigation/search/zoom controller. `onViewportReady`
 provides the internal slide surface for advanced integrations and test harnesses.
 
+## OfficeArt visuals
+
+Pictures, supported shapes, connectors, and saved SmartArt drawings use the shared Rust OfficeArt renderer. SmartArt text retains its saved text frame separately from the shape frame, including independent offsets, dimensions, rotation, and flips. Semantic data without a supported saved drawing remains an explicit layout fallback.
+
+`parsePresentation(source, { include3dModels: true })` includes original embedded 3D model bytes and content type, model and preview relationships, and scene XML in `ImageNode.model3d`. The option also works through `ReactPptxViewer`'s `parseOptions` and the parsing hook. It defaults to `false`; cached Office raster previews remain the rendered appearance. This metadata does not add an interactive 3D renderer.
+
 ## Cold-start thumbnails
 
 `createPptxThumbnailRenderer` renders directly from a `ParsedPresentation`; it does not mount or

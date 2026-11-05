@@ -332,6 +332,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     const batchSize = virtualizationOptions.batchSize ?? 3;
     const scrollElement = virtualizationOptions.scrollElement ?? null;
     const parseFormatHint = parseOptions?.formatHint;
+    const parseInclude3dModels = parseOptions?.include3dModels;
     const parseMaxInputBytes = parseOptions?.maxInputBytes;
     const parseFetchInit = parseOptions?.fetchInit;
     const parseFetchInitKey = requestInitKey(parseFetchInit);
@@ -477,6 +478,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       void parsePresentation(source, {
         signal: abort.signal,
         ...(parseFormatHint ? { formatHint: parseFormatHint } : {}),
+        ...(parseInclude3dModels !== undefined ? { include3dModels: parseInclude3dModels } : {}),
         ...(parseMaxInputBytes !== undefined ? { maxInputBytes: parseMaxInputBytes } : {}),
         ...(parseFetchInit ? { fetchInit: parseFetchInit } : {}),
         onPerformanceMeasurement: (measurement) =>
@@ -502,7 +504,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
           if (!abort.signal.aborted) setLoading(false);
         });
       return () => abort.abort();
-    }, [source, parseFormatHint, parseMaxInputBytes, parseFetchInitKey]);
+    }, [source, parseFormatHint, parseInclude3dModels, parseMaxInputBytes, parseFetchInitKey]);
 
     useEffect(() => {
       const viewport = viewportRef.current;

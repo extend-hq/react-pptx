@@ -1,3 +1,4 @@
+import type { WasmParseOptions } from '@extend-ai/react-pptx-wasm';
 import type { PresentationDocument } from '@extend-ai/react-pptx-model';
 import { PptxViewerError } from './errors';
 
@@ -113,7 +114,7 @@ function parserFailure(error: unknown): PptxViewerError | null {
 
 export async function parseWithWasm(
   bytes: Uint8Array,
-  options?: { signal?: AbortSignal; formatHint?: 'ppt' | 'pptx' },
+  options?: { signal?: AbortSignal; formatHint?: 'ppt' | 'pptx'; include3dModels?: boolean },
 ): Promise<PresentationDocument | null> {
   try {
     if (
@@ -121,7 +122,7 @@ export async function parseWithWasm(
       typeof window !== 'undefined' &&
       typeof Worker !== 'undefined'
     ) {
-      const result = await parseInWorker(bytes, options?.signal, configuredWorkerSource);
+      const result = await parseInWorker(bytes, options?.signal, configuredWorkerSource, { include3dModels: options?.include3dModels ?? false });
       return isPresentationDocument(result) ? result : null;
     }
     await initWasm();
@@ -129,8 +130,7 @@ export async function parseWithWasm(
     const parse = runtime.parsePresentation ?? runtime.parse_presentation;
     if (!parse) return null;
     const result = await parse(bytes, {
-      formatHint: options?.formatHint,
-      signal: options?.signal,
+      include3dModels: options?.include3dModels,
     });
     const value = typeof result === 'string' ? (JSON.parse(result) as unknown) : result;
     return isPresentationDocument(value) ? value : null;
@@ -148,6 +148,7 @@ async function parseInWorker(
   bytes: Uint8Array,
   signal?: AbortSignal,
   wasmSource?: WorkerWasmSource,
+  parserOptions?: WasmParseOptions,
 ): Promise<unknown> {
   if (signal?.aborted) throw new DOMException('Parsing was aborted.', 'AbortError');
 
@@ -202,7 +203,7 @@ async function parseInWorker(
     }
 
     try {
-      worker.postMessage({ id, bytes: owned, wasmSource }, [owned]);
+      worker.postMessage({ id, bytes: owned, wasmSource, parserOptions }, [owned]);
     } catch (error) {
       settle(() => reject(error));
     }

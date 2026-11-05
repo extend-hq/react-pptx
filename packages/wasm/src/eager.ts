@@ -1,3 +1,6 @@
+import type { WasmParseOptions } from './options';
+export type { WasmParseOptions } from './options';
+
 import initialize, { detect_presentation_format, parse_presentation } from '../pkg/pptx_wasm.js';
 
 export type WasmSource =
@@ -22,9 +25,9 @@ export async function initWasm(nextSource?: WasmSource): Promise<void> {
   await initialized;
 }
 
-export async function parsePresentation(bytes: Uint8Array): Promise<unknown> {
+export async function parsePresentation(bytes: Uint8Array, options?: WasmParseOptions): Promise<unknown> {
   await initWasm();
-  return parse_presentation(bytes);
+  return parse_presentation(bytes, options);
 }
 
 export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt' | 'pptx'> {

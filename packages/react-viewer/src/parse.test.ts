@@ -80,12 +80,13 @@ describe('parsePresentation', () => {
   });
 
   it('enforces the default input ceiling', () => {
-    expect(presentationParsingDefaults).toEqual({ maxInputBytes: 100 * 1024 * 1024 });
+    expect(presentationParsingDefaults).toEqual({ maxInputBytes: 100 * 1024 * 1024, include3dModels: false });
   });
 
   it('exposes only parser options implemented by the owned parser boundary', () => {
     const supportedOptions: Record<keyof ParsePresentationOptions, true> = {
       signal: true,
+      include3dModels: true,
       formatHint: true,
       maxInputBytes: true,
       fetchInit: true,
@@ -94,6 +95,7 @@ describe('parsePresentation', () => {
 
     expect(Object.keys(supportedOptions)).toEqual([
       'signal',
+      'include3dModels',
       'formatHint',
       'maxInputBytes',
       'fetchInit',

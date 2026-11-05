@@ -1,3 +1,6 @@
+import type { WasmParseOptions } from './options';
+export type { WasmParseOptions } from './options';
+
 type WasmModule = typeof import('../pkg/pptx_wasm.js');
 
 export type WasmSource = string | URL | Request | Response | BufferSource | WebAssembly.Module;
@@ -20,10 +23,10 @@ export async function initWasm(nextSource?: WasmSource): Promise<void> {
   await runtimePromise;
 }
 
-export async function parsePresentation(bytes: Uint8Array): Promise<unknown> {
+export async function parsePresentation(bytes: Uint8Array, options?: WasmParseOptions): Promise<unknown> {
   await initWasm();
   const runtime = await runtimePromise!;
-  return runtime.parse_presentation(bytes);
+  return runtime.parse_presentation(bytes, options);
 }
 
 export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt' | 'pptx'> {

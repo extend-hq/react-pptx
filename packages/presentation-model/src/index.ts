@@ -200,6 +200,7 @@ export interface ShapeNode extends BaseSlideNode {
   textInsets?: { top: number; right: number; bottom: number; left: number };
   autofit?: TextAutofit;
   textRotation?: number;
+  textTransform?: Transform;
   verticalText?: string;
   horizontalOverflow?: string;
   verticalOverflow?: string;
@@ -219,8 +220,30 @@ export interface PicturePaintBounds {
   layoutHeightPx: number;
 }
 
+export interface Model3DAsset {
+  partName: string;
+  contentType: string;
+  data?: Uint8Array;
+}
+
+export interface Model3DPreview {
+  modelRelationshipId?: string;
+  rasterRelationshipId: string;
+  renderer?: string;
+  rendererVersion?: string;
+}
+
+export interface Model3D {
+  modelRelationshipId?: string;
+  linkedModelRelationshipId?: string;
+  asset?: Model3DAsset;
+  preview?: Model3DPreview;
+  sourceXml: string;
+}
+
 export interface ImageNode extends BaseSlideNode {
   type: 'image';
+  model3d?: Model3D;
   assetId: string;
   crop?: { top: number; right: number; bottom: number; left: number };
   preserveAspectRatio?: boolean;

@@ -58,7 +58,7 @@ export function usePptxPresentation(
         }
       });
     return () => abort.abort();
-  }, [source, options.fetchInit, options.formatHint, options.maxInputBytes]);
+  }, [source, options.fetchInit, options.formatHint, options.maxInputBytes, options.include3dModels]);
 
   return state;
 }

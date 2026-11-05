@@ -125,3 +125,5 @@ MIT. See [third-party notices](THIRD_PARTY_NOTICES.md) for bundled chart and atl
 
 Maintainers can find the versioning, npm Trusted Publishing, and automated GitHub
 release process in [the release guide](docs/releasing.md).
+
+Saved SmartArt drawings share OfficeArt geometry and retain independent text-frame transforms. The optional `include3dModels` parser setting exposes original 3D assets and scene metadata while retaining cached Office previews for display; see the [package documentation](packages/react-viewer/README.md#officeart-visuals).

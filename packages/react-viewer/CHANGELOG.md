@@ -1,5 +1,11 @@
 # @extend-ai/react-pptx
 
+## 0.2.5
+
+- Refresh the shared Rust parser and OfficeArt renderer for cached SmartArt shapes, pictures, effects, and charts.
+- Render saved SmartArt text frames independently, preserve authoritative cached labels, and resolve cached drawings across relationship scopes.
+- Add the opt-in `include3dModels` parser option for original 3D model assets and scene metadata while retaining cached preview rendering.
+
 ## 0.2.3
 
 - Use the Rust Office crates by Extend and refresh the bundled WebAssembly.

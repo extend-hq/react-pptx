@@ -47,6 +47,7 @@ export type ViewerZoomState = {
 };
 
 export interface ParsePresentationOptions {
+  include3dModels?: boolean;
   signal?: AbortSignal;
   formatHint?: PresentationFormat;
   maxInputBytes?: number;

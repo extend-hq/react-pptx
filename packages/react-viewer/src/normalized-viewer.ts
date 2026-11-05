@@ -1411,7 +1411,7 @@ export class NormalizedPresentationViewer {
       }
       const shapeAutofit = node.autofit?.mode === 'shape';
       const verticalText = Boolean(node.verticalText && node.verticalText.toLowerCase() !== 'horz');
-      const growsToFitText = shapeAutofit && !verticalText;
+      const growsToFitText = shapeAutofit && !verticalText && !node.textTransform;
       if (growsToFitText) {
         const minimumHeight = element.style.height;
         element.style.height = 'auto';
@@ -1472,18 +1472,35 @@ export class NormalizedPresentationViewer {
             : {}),
         });
         textBody.append(textContent);
-        if (paintedShape) {
+        if (paintedShape || node.textTransform) {
           const textFrame = document.createElement('div');
           textFrame.style.position = growsToFitText ? 'relative' : 'absolute';
           if (!growsToFitText) textFrame.style.inset = '0';
           textFrame.style.width = '100%';
           textFrame.style.height = growsToFitText ? 'auto' : '100%';
           if (growsToFitText) textFrame.style.flex = '1 0 auto';
-          textFrame.style.transform = transforms.join(' ');
+          textFrame.style.transform = paintedShape ? transforms.join(' ') : '';
           textFrame.style.transformOrigin = 'center';
-          textFrame.style.overflowX = horizontalOverflow;
-          textFrame.style.overflowY = verticalOverflow;
-          textFrame.append(textBody);
+          textFrame.style.overflowX = node.textTransform ? 'visible' : horizontalOverflow;
+          textFrame.style.overflowY = node.textTransform ? 'visible' : verticalOverflow;
+          if (node.textTransform && node.transform.width > 0 && node.transform.height > 0) {
+            const saved = node.textTransform;
+            const savedFrame = document.createElement('div');
+            savedFrame.dataset.rpvIndependentTextFrame = '';
+            savedFrame.style.position = 'absolute';
+            savedFrame.style.left = `${((saved.x - node.transform.x) / node.transform.width) * 100}%`;
+            savedFrame.style.top = `${((saved.y - node.transform.y) / node.transform.height) * 100}%`;
+            savedFrame.style.width = `${(saved.width / node.transform.width) * 100}%`;
+            savedFrame.style.height = `${(saved.height / node.transform.height) * 100}%`;
+            savedFrame.style.transformOrigin = 'center';
+            savedFrame.style.transform = `rotate(${saved.rotation ?? 0}deg) scale(${saved.flipHorizontal ? -1 : 1}, ${saved.flipVertical ? -1 : 1})`;
+            savedFrame.style.overflowX = horizontalOverflow;
+            savedFrame.style.overflowY = verticalOverflow;
+            savedFrame.append(textBody);
+            textFrame.append(savedFrame);
+          } else {
+            textFrame.append(textBody);
+          }
           element.append(textFrame);
         } else {
           element.append(textBody);
