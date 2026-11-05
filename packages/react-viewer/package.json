@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-pptx",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Browser-native, virtualized React viewer for PowerPoint PPT and PPTX files",
   "type": "module",
   "sideEffects": [
@@ -49,7 +49,8 @@
     "typescript": "^5.8.3",
     "us-atlas": "^3.0.1",
     "vitest": "^4.1.11",
-    "world-atlas": "^2.0.2"
+    "world-atlas": "^2.0.2",
+    "@extend-ai/office-fonts": "https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz"
   },
   "publishConfig": {
     "access": "public"

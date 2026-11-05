@@ -156,10 +156,9 @@ fallbacks for Latin, CJK, Arabic, Hebrew, emoji, and math glyphs.
 />
 ```
 
-The package does not redistribute proprietary Microsoft fonts. For identical metrics across
-machines, self-host the fonts your license permits or install metric-compatible families such
-as Carlito and Caladea. `resolvePptxFontFamily()` and `OFFICE_FONT_FALLBACKS` are exported for
-applications that also render presentation text outside the viewer.
+The viewer bundles shared fallbacks for Calibri, Arial, Times New Roman, Courier New, Aptos and Aptos Narrow. It loads requested families before layout and prefers embedded, caller-provided and installed originals. Each family is a lazy chunk; deploy all generated chunks alongside the viewer. Set `fonts.useOfficeFallbacks` to `false` to disable automatic fallback loading. Redistribution notices are in `dist/Office-Font-Licenses.txt`.
+
+The package does not redistribute proprietary Microsoft fonts. Other families depend on embedded fonts or fonts supplied by the host. `resolvePptxFontFamily()` and `OFFICE_FONT_FALLBACKS` are exported for applications that render presentation text outside the viewer.
 
 ## Custom scroll areas and hooks
 

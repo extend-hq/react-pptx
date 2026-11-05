@@ -127,6 +127,9 @@ importers:
         specifier: ^3.1.0
         version: 3.1.0
     devDependencies:
+      '@extend-ai/office-fonts':
+        specifier: https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz
+        version: https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz
       '@types/d3-geo':
         specifier: ^3.1.0
         version: 3.1.0
@@ -441,6 +444,10 @@ packages:
     engines: {node: '>=18'}
     cpu: [x64]
     os: [win32]
+
+  '@extend-ai/office-fonts@https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz':
+    resolution: {tarball: https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz}
+    version: 0.1.0
 
   '@fontsource-variable/inter@5.2.8':
     resolution: {integrity: sha512-kOfP2D+ykbcX/P3IFnokOhVRNoTozo5/JxhAIVYLpea/UBmCQ/YWPBfWIDuBImXX/15KH+eKh4xpEUyS2sQQGQ==}
@@ -2093,6 +2100,8 @@ snapshots:
 
   '@esbuild/win32-x64@0.28.1':
     optional: true
+
+  '@extend-ai/office-fonts@https://github.com/extend-hq/rust-office/releases/download/office-fonts-v0.1.0/extend-ai-office-fonts-0.1.0.tgz': {}
 
   '@fontsource-variable/inter@5.2.8': {}
 

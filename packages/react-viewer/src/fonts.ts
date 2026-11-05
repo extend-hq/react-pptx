@@ -1,3 +1,4 @@
+import { loadOfficeFonts } from '@extend-ai/office-fonts';
 import type {
   PresentationDocument,
   PresentationEmbeddedFont,
@@ -22,17 +23,18 @@ const GENERIC_FAMILIES = new Set([
 
 /** Cross-platform, metrically similar substitutions for common Office typefaces. */
 export const OFFICE_FONT_FALLBACKS: Readonly<Record<string, readonly string[]>> = {
-  aptos: ['Aptos', 'Segoe UI', 'Arial', 'sans-serif'],
+  aptos: ['Aptos', 'Intos', 'Segoe UI', 'Arial', 'sans-serif'],
+  'aptos narrow': ['Aptos Narrow', 'Intos Narrow', 'Arial', 'sans-serif'],
   'aptos display': ['Aptos Display', 'Segoe UI', 'Arial', 'sans-serif'],
   calibri: ['Calibri', 'Carlito', 'Arial', 'sans-serif'],
   'calibri light': ['Calibri Light', 'Carlito', 'Arial', 'sans-serif'],
   cambria: ['Cambria', 'Caladea', 'Georgia', 'serif'],
   'cambria math': ['Cambria Math', 'STIX Two Math', 'STIXGeneral', 'math'],
-  arial: ['Arial', 'Liberation Sans', 'Helvetica', 'sans-serif'],
+  arial: ['Arial', 'Arimo', 'Liberation Sans', 'Helvetica', 'sans-serif'],
   'arial narrow': ['Arial Narrow', 'Liberation Sans Narrow', 'Arial', 'sans-serif'],
   'arial unicode ms': ['Arial Unicode MS', 'Noto Sans', 'Segoe UI Symbol', 'sans-serif'],
-  'times new roman': ['Times New Roman', 'Liberation Serif', 'Times', 'serif'],
-  'courier new': ['Courier New', 'Liberation Mono', 'Courier', 'monospace'],
+  'times new roman': ['Times New Roman', 'Tinos', 'Liberation Serif', 'Times', 'serif'],
+  'courier new': ['Courier New', 'Cousine', 'Liberation Mono', 'Courier', 'monospace'],
   consolas: ['Consolas', 'Cascadia Mono', 'Liberation Mono', 'monospace'],
   'century gothic': ['Century Gothic', 'Avenir Next', 'Futura', 'Arial', 'sans-serif'],
   'franklin gothic medium': ['Franklin Gothic Medium', 'Arial', 'sans-serif'],
@@ -258,6 +260,27 @@ export class PptxFontManager {
         message: `The supplied font “${family}” could not be loaded; a compatible fallback will be used.`,
       });
     });
+    if (this.options.useOfficeFallbacks !== false) {
+      const families = new Set<string>(['Calibri']);
+      const seen = new Set<object>();
+      const collect = (value: unknown): void => {
+        if (!value || typeof value !== 'object' || seen.has(value)) return;
+        seen.add(value);
+        for (const [key, child] of Object.entries(value)) {
+          if (/fontFamily$/i.test(key) && typeof child === 'string') families.add(child);
+          else if (child && typeof child === 'object') collect(child);
+        }
+      };
+      collect(presentation.slides);
+      collect(presentation.masters);
+      collect(presentation.layouts);
+      for (const theme of presentation.themes) {
+        for (const family of [...Object.values(theme.majorFonts ?? {}), ...Object.values(theme.minorFonts ?? {})]) {
+          if (family) families.add(family);
+        }
+      }
+      await loadOfficeFonts(document, families).catch(() => undefined);
+    }
     if (document.fonts && this.options.waitForFonts !== false) {
       await timeout(
         Promise.resolve(document.fonts.ready).then(() => undefined),
