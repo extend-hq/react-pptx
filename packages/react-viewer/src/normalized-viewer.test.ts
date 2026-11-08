@@ -349,7 +349,7 @@ describe('normalized viewer safety and fidelity', () => {
         .color,
     ).toBe('');
     expect(
-      container.querySelector('rect[data-xlsx-chart-series-index]')?.getAttribute('fill'),
+      container.querySelector('rect[data-rpv-chart-series]')?.getAttribute('fill'),
     ).toBe('#4472c4');
     expect(container.innerHTML).not.toMatch(/attacker|javascript:bad|evil\.example/i);
     viewer.destroy();
@@ -747,7 +747,7 @@ describe('normalized viewer safety and fidelity', () => {
     expect(chartMarkup).not.toContain('Infinity');
     const bars = [
       ...container.querySelectorAll<SVGRectElement>(
-        '[data-rpv-node-id="sparse-chart"] rect[data-xlsx-chart-series-index]',
+        '[data-rpv-node-id="sparse-chart"] rect[data-rpv-chart-series]',
       ),
     ];
     expect(bars.length).toBeGreaterThanOrEqual(2);
@@ -756,8 +756,8 @@ describe('normalized viewer safety and fidelity', () => {
       expect(Number.isFinite(Number(bar.getAttribute('height')))).toBe(true);
     }
     // Value -2 spans twice the plot distance of value 1 around the zero line.
-    const first = bars.find((bar) => bar.getAttribute('data-xlsx-chart-point-index') === '0')!;
-    const last = bars.find((bar) => bar.getAttribute('data-xlsx-chart-point-index') === '4')!;
+    const first = bars.find((bar) => bar.getAttribute('data-rpv-chart-point') === '0')!;
+    const last = bars.find((bar) => bar.getAttribute('data-rpv-chart-point') === '4')!;
     expect(Number(last.getAttribute('height'))).toBeCloseTo(
       2 * Number(first.getAttribute('height')),
       5,
@@ -791,7 +791,7 @@ describe('normalized viewer safety and fidelity', () => {
 
     const bars = [
       ...container.querySelectorAll<SVGRectElement>(
-        '[data-rpv-node-id="positive-chart"] rect[data-xlsx-chart-series-index]',
+        '[data-rpv-node-id="positive-chart"] rect[data-rpv-chart-series]',
       ),
     ];
     expect(bars).toHaveLength(2);

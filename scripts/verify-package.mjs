@@ -57,44 +57,17 @@ try {
     }
   }
 
-  // The chart stack ships as ordinary runtime dependencies; only this exact
-  // set is allowed so stray packages cannot creep into the manifest.
-  const allowedRuntimeDependencies = new Set([
-    '@tanstack/react-virtual',
-    '@tanstack/virtual-core',
-    'd3-geo',
-    'd3-hierarchy',
-    'd3-scale',
-    'd3-shape',
-    'regl',
-    'topojson-client',
-  ]);
-  const runtimeDependencies = new Set([
+  // Charts arrive as SVG from the bundled Rust parser and TanStack Virtual is
+  // bundled, so the published package must not require any runtime packages
+  // beyond its React peers.
+  const runtimeDependencies = [
     ...Object.keys(manifest.dependencies ?? {}),
     ...Object.keys(manifest.optionalDependencies ?? {}),
-  ]);
-  const unexpectedDependencies = [...runtimeDependencies].filter(
-    (name) => !allowedRuntimeDependencies.has(name),
-  );
-  if (unexpectedDependencies.length > 0) {
+  ];
+  if (runtimeDependencies.length > 0) {
     throw new Error(
-      `Packed package unexpectedly requires runtime packages: ${unexpectedDependencies.join(', ')}`,
+      `Packed package unexpectedly requires runtime packages: ${runtimeDependencies.join(', ')}`,
     );
-  }
-  const missingDependencies = [...allowedRuntimeDependencies].filter(
-    (name) => !runtimeDependencies.has(name),
-  );
-  if (missingDependencies.length > 0) {
-    throw new Error(
-      `Packed package is missing runtime dependencies: ${missingDependencies.join(', ')}`,
-    );
-  }
-  for (const atlasPackage of ['us-atlas', 'world-atlas']) {
-    if (runtimeDependencies.has(atlasPackage)) {
-      throw new Error(
-        `${atlasPackage} must stay bundled in the lazy atlas chunk, not a dependency`,
-      );
-    }
   }
 
   const expectedPeers = new Set(['react', 'react-dom']);
@@ -124,22 +97,18 @@ try {
     }
   }
 
-  // The multi-megabyte TopoJSON atlases must live in a code-split chunk that
-  // only loads when a presentation contains an Excel map chart.
+  // The legacy TypeScript chart renderer bundled TopoJSON atlases; make sure
+  // no map geometry or chart library creeps back into the published output.
   const distFiles = readdirSync(join(packedDirectory, 'dist')).filter((file) =>
     file.endsWith('.js'),
   );
-  const atlasMarker = '"Topology"';
-  const atlasChunks = distFiles.filter(
-    (file) =>
-      file !== 'index.js' &&
-      readFileSync(join(packedDirectory, 'dist', file), 'utf8').includes(atlasMarker),
-  );
-  if (atlasChunks.length === 0) {
-    throw new Error('Packed package is missing the lazily loaded region-map atlas chunk');
-  }
-  if (readFileSync(join(packedDirectory, 'dist', 'index.js'), 'utf8').includes(atlasMarker)) {
-    throw new Error('Region-map atlas data leaked into the eagerly loaded entry bundle');
+  for (const marker of ['"Topology"', 'd3-geo', 'd3-shape', 'topojson-client', 'regl']) {
+    const offenders = distFiles.filter((file) =>
+      readFileSync(join(packedDirectory, 'dist', file), 'utf8').includes(marker),
+    );
+    if (offenders.length > 0) {
+      throw new Error(`Packed output still contains ${marker} in ${offenders.join(', ')}`);
+    }
   }
 
   const distributableSource = readdirSync(join(packedDirectory, 'dist'))
@@ -172,8 +141,8 @@ try {
       ? specifier.split('/').slice(0, 2).join('/')
       : specifier.split('/')[0];
   // Module specifiers never contain whitespace, quotes, or parentheses; this
-  // keeps bundled runtime strings such as regl's error messages
-  // (`" called from " + callSite`) from tripping the scanner.
+  // keeps bundled runtime strings that happen to follow an `import(` or
+  // `from ` token from tripping the scanner.
   const specifierPattern = /^[@a-zA-Z0-9][\w.+-]*(?:\/[\w.+-]+)*$/;
   const undeclaredImports = [
     ...new Set(

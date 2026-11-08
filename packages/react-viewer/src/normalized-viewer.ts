@@ -6,12 +6,11 @@ import type {
   PicturePaintBounds,
   PresentationDocument,
   PresentationSearchResult,
-  PresentationTheme,
   SlideNode,
   TextParagraph,
   TextRun,
 } from '@extend-ai/react-pptx-model';
-import { renderChartInto } from './charts/chart-host';
+import { renderChartInto } from './chart-svg';
 import type {
   FitMode,
   SearchHighlightOptions,
@@ -1220,22 +1219,13 @@ export class NormalizedPresentationViewer {
     return svg;
   }
 
-  private themeForSlide(index: number | undefined): PresentationTheme | undefined {
-    const slide = index === undefined ? undefined : this.presentation.slides[index];
-    const master = this.presentation.masters.find((entry) => entry.id === slide?.masterId);
-    return (
-      this.presentation.themes.find((entry) => entry.id === master?.themeId) ??
-      this.presentation.themes[0]
-    );
-  }
-
   private createChart(node: Extract<SlideNode, { type: 'chart' }>): HTMLElement {
     const container = document.createElement('div');
     container.style.width = '100%';
     container.style.height = '100%';
     container.setAttribute('role', 'img');
     container.setAttribute('aria-label', node.title ?? `${node.chartType} chart`);
-    if (renderChartInto(container, node, this.themeForSlide(this.renderingSlideIndex))) {
+    if (renderChartInto(container, node)) {
       return container;
     }
     return this.createChartFallback(node);
@@ -1323,6 +1313,7 @@ export class NormalizedPresentationViewer {
         line.setAttribute('fill', 'none');
         line.setAttribute('stroke', color(series.color) ?? palette[seriesIndex % palette.length]!);
         line.setAttribute('stroke-width', '8');
+        line.setAttribute('data-rpv-chart-series', String(seriesIndex));
         svg.append(line);
       });
     } else {
@@ -1340,6 +1331,8 @@ export class NormalizedPresentationViewer {
           rect.setAttribute('width', String(barWidth * 0.9));
           rect.setAttribute('height', String(height));
           rect.setAttribute('fill', color(series.color) ?? palette[seriesIndex % palette.length]!);
+          rect.setAttribute('data-rpv-chart-series', String(seriesIndex));
+          rect.setAttribute('data-rpv-chart-point', String(index));
           svg.append(rect);
         });
       });

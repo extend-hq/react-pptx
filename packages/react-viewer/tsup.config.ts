@@ -2,14 +2,13 @@ import { defineConfig } from 'tsup';
 import { copyFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 
-// d3/regl/topojson/TanStack Virtual ship as regular dependencies; only the
-// TopoJSON atlas data stays bundled, inside a dynamically imported chunk so
-// consumers never download map geometry unless a deck contains a map chart.
+// Charts arrive as SVG from the Rust parser, so the published package has no
+// runtime dependencies: the workspace packages, the Office font fallbacks, and
+// TanStack Virtual are all bundled. Only React stays external.
 const bundledPackages = [
   "@extend-ai/office-fonts",
   /^@extend-ai\/react-pptx-(?:model|wasm)(?:\/.*)?$/,
-  /^us-atlas(?:\/.*)?$/,
-  /^world-atlas(?:\/.*)?$/,
+  /^@tanstack\/(?:react-virtual|virtual-core)(?:\/.*)?$/,
 ];
 
 export default defineConfig({

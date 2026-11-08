@@ -1,5 +1,13 @@
 # @extend-ai/react-pptx
 
+## Unreleased
+
+- Remove the TypeScript chart fallback renderer. Charts are rendered to SVG by the bundled Rust parser (`rust-office-charts`), so `d3-*`, `regl`, `topojson-client`, and the TopoJSON atlas chunk are gone from the package.
+- Bundle TanStack Virtual; the package now has no runtime dependencies beyond its React peers.
+- Accept picture fills, `<desc>` notes, markers, and filter primitives in parser-rendered chart SVG instead of dropping to a placeholder.
+- Chart nodes without parser SVG fall back to the built-in series placeholder, whose bars and lines now carry `data-rpv-chart-series` / `data-rpv-chart-point` attributes.
+- Excel map charts render from the geometry PowerPoint saves in the chart part (`cx:geoCache`); a map chart saved without it shows the placeholder instead of the former TopoJSON approximation.
+
 ## 0.2.5
 
 - Refresh the shared Rust parser and OfficeArt renderer for cached SmartArt shapes, pictures, effects, and charts.
