@@ -90,6 +90,10 @@ class PresentationAssetCache {
   private readonly objectUrls = new Set<string>();
   private readonly assetUrls = new Map<string, string>();
   private readonly metafileUrls = new Map<string, Promise<string | undefined>>();
+  private readonly pendingPictureUrls = new Map<string, Promise<string>>();
+  private readonly imageDecodeWaiters: Array<() => void> = [];
+  private activeImageDecodes = 0;
+  private generation = 0;
 
   acquire(): this {
     this.references += 1;
@@ -129,9 +133,108 @@ class PresentationAssetCache {
     return Promise.resolve(url);
   }
 
+  private async decodeImageUrl(url: string, generation: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      if (this.activeImageDecodes < 4) {
+        this.activeImageDecodes += 1;
+        resolve();
+      } else {
+        this.imageDecodeWaiters.push(resolve);
+      }
+    });
+    try {
+      if (!this.references || generation !== this.generation) throw new Error('Picture render is no longer active.');
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+    } finally {
+      const next = this.imageDecodeWaiters.shift();
+      if (next) next();
+      else this.activeImageDecodes -= 1;
+    }
+  }
+
+  pictureUrl(svg: string): Promise<string> {
+    const cached = this.pendingPictureUrls.get(svg);
+    if (cached) return cached;
+    const generation = this.generation;
+    const operation = async (): Promise<string> => {
+      const resources = new Set<string>();
+      const remaining = [{ svg, depth: 0 }];
+      while (remaining.length) {
+        if (!this.references || generation !== this.generation) throw new Error('Picture render is no longer active.');
+        const current = remaining.pop()!;
+        if (current.depth > 32) throw new Error('Embedded picture nesting is too deep.');
+        const document = new DOMParser().parseFromString(current.svg, 'image/svg+xml');
+        const root = document.documentElement;
+        if (root.namespaceURI !== 'http://www.w3.org/2000/svg' || root.localName !== 'svg' || document.getElementsByTagName('parsererror').length) {
+          throw new Error('Picture artwork could not be decoded.');
+        }
+        for (const name of ['image', 'feImage']) {
+          for (const element of document.getElementsByTagNameNS('http://www.w3.org/2000/svg', name)) {
+            const source = element.getAttribute('href') ?? element.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+            if (!source || source.startsWith('#') || resources.has(source)) continue;
+            if (!/^data:/i.test(source)) throw new Error('Picture artwork contains an unavailable embedded resource.');
+            resources.add(source);
+            if (/^data:image\/svg\+xml[;,]/i.test(source)) {
+              const separator = source.indexOf(',');
+              if (separator < 0) throw new Error('Embedded picture data is invalid.');
+              const fragment = source.indexOf('#', separator + 1);
+              const payload = source.slice(separator + 1, fragment < 0 ? undefined : fragment);
+              let bytes: Uint8Array;
+              if (/;base64\s*$/i.test(source.slice(0, separator))) {
+                const binary = atob(payload.replace(/%([\da-f]{2})/gi, (_, value: string) => String.fromCharCode(parseInt(value, 16))));
+                bytes = Uint8Array.from(binary, (value) => value.charCodeAt(0));
+              } else {
+                const encoded = new TextEncoder().encode(payload);
+                const decoded = new Uint8Array(encoded.length);
+                let length = 0;
+                for (let index = 0; index < encoded.length; index++) {
+                  const value = encoded[index]!;
+                  if (value === 37) {
+                    const hex = String.fromCharCode(encoded[index + 1] ?? 0, encoded[index + 2] ?? 0);
+                    if (/^[\da-f]{2}$/i.test(hex)) {
+                      decoded[length++] = parseInt(hex, 16);
+                      index += 2;
+                      continue;
+                    }
+                  }
+                  decoded[length++] = value;
+                }
+                bytes = decoded.subarray(0, length);
+              }
+              const prefix = String.fromCharCode(...bytes.subarray(0, 256));
+              const encoding = bytes[0] === 0xff && bytes[1] === 0xfe || bytes[0] === 0x3c && bytes[1] === 0
+                ? 'utf-16le' : bytes[0] === 0xfe && bytes[1] === 0xff || bytes[0] === 0 && bytes[1] === 0x3c
+                  ? 'utf-16be' : prefix.match(/^\uFEFF?<\?xml[^>]*\bencoding\s*=\s*["']([^"']+)["']/i)?.[1] ?? 'utf-8';
+              remaining.push({ svg: new TextDecoder(encoding, { fatal: true }).decode(bytes), depth: current.depth + 1 });
+            }
+          }
+        }
+      }
+      const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+      await Promise.all([...resources, url].map((source) => this.decodeImageUrl(source, generation)));
+      return url;
+    };
+    const pending = operation().then(
+      (url) => {
+        if (this.pendingPictureUrls.get(svg) === pending) this.pendingPictureUrls.delete(svg);
+        return url;
+      },
+      (error: unknown) => {
+        if (this.pendingPictureUrls.get(svg) === pending) this.pendingPictureUrls.delete(svg);
+        throw error;
+      },
+    );
+    this.pendingPictureUrls.set(svg, pending);
+    return pending;
+  }
+
   release(): void {
     this.references = Math.max(0, this.references - 1);
     if (this.references > 0) return;
+    this.generation += 1;
+    this.pendingPictureUrls.clear();
     for (const url of this.objectUrls) URL.revokeObjectURL(url);
     this.objectUrls.clear();
     this.assetUrls.clear();
@@ -329,6 +432,36 @@ function runFontFamily(run: TextRun): string | undefined {
   return families.length > 0 ? families.join(', ') : undefined;
 }
 
+function createMathElement(markup: string): Element | undefined {
+  if (markup.length > 1024 * 1024) return undefined;
+  const namespace = 'http://www.w3.org/1998/Math/MathML';
+  const root = new DOMParser().parseFromString(markup, 'application/xml').documentElement;
+  if (root.localName !== 'math' || root.namespaceURI !== namespace) return undefined;
+  const tags = new Set(['math', 'mrow', 'mi', 'mn', 'mo', 'mtext', 'mfrac', 'msub', 'msup',
+    'msubsup', 'mmultiscripts', 'mprescripts', 'none', 'msqrt', 'mroot', 'munder', 'mover',
+    'munderover', 'mtable', 'mtr', 'mtd', 'mstyle', 'mphantom', 'mpadded']);
+  const attributes = new Set(['display', 'mathvariant', 'mathsize', 'mathcolor', 'fence',
+    'stretchy', 'separator', 'largeop', 'accent', 'accentunder', 'linethickness', 'bevelled', 'width', 'height', 'depth']);
+  let remaining = 16384;
+  const clone = (source: Element, depth: number): Element | undefined => {
+    if (--remaining < 0 || depth > 64 || source.namespaceURI !== namespace || !tags.has(source.localName)) return undefined;
+    const target = document.createElementNS(namespace, source.localName);
+    for (const attribute of source.attributes) {
+      if (!attribute.namespaceURI && attributes.has(attribute.name)) target.setAttribute(attribute.name, attribute.value);
+    }
+    for (const child of source.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) target.append(document.createTextNode(child.textContent ?? ''));
+      else if (child instanceof Element) {
+        const parsed = clone(child, depth + 1);
+        if (!parsed) return undefined;
+        target.append(parsed);
+      }
+    }
+    return target;
+  };
+  return clone(root, 0);
+}
+
 function createTextRunElement(
   run: TextRun,
   paragraph: TextParagraph,
@@ -336,7 +469,13 @@ function createTextRunElement(
 ): HTMLElement {
   const href = safeHyperlink(run.hyperlink);
   const span = document.createElement(href ? 'a' : 'span');
-  span.textContent = run.text;
+  const math = run.math ? createMathElement(run.math.mathMl) : undefined;
+  if (math) {
+    span.append(math);
+    span.dataset.rpvMath = '';
+    span.style.display = 'inline-block';
+    span.style.fontStyle = 'normal';
+  } else span.textContent = run.text;
   const fontFamily = runFontFamily(run);
   if (fontFamily) span.style.fontFamily = fontFamily;
   if (run.fontSizePt !== undefined) span.style.fontSize = `${run.fontSizePt * fontScale}pt`;
@@ -350,7 +489,7 @@ function createTextRunElement(
         : 'none';
   }
   if (run.bold) span.style.fontWeight = '700';
-  if (run.italic) span.style.fontStyle = 'italic';
+  if (run.italic && !math) span.style.fontStyle = 'italic';
   const decorations = [run.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(
     Boolean,
   );
@@ -387,6 +526,7 @@ function createTextRunElement(
 function splitRunsIntoTabRows(runs: TextRun[]): TextRun[][][] {
   const rows: TextRun[][][] = [[[]]];
   for (const run of runs) {
+    if (run.math) { rows.at(-1)!.at(-1)!.push(run); continue; }
     for (const token of run.text.split(/([\t\n])/u)) {
       if (!token) continue;
       if (token === '\t') {
@@ -831,6 +971,7 @@ function searchDocument(
       } else if (node.type === 'table' && options.includeTables !== false) {
         for (const row of node.rows)
           for (const cell of row) {
+            if (cell.merge?.horizontal || cell.merge?.vertical) continue;
             texts.push(...cell.paragraphs.map((p) => p.runs.map((run) => run.text).join('')));
           }
       } else if (node.type === 'chart') {
@@ -882,6 +1023,7 @@ export class NormalizedPresentationViewer {
   private listCleanup: (() => void) | undefined;
   private highlight: HTMLElement | undefined;
   private activeMountResources: Set<Promise<void>> | undefined;
+  private activeMountLifetime: { disposed: boolean } | undefined;
   private mountedHandles = new Set<DisposableHandle>();
   private handlesByTarget = new Map<HTMLElement, DisposableHandle>();
   private destroyed = false;
@@ -1030,6 +1172,84 @@ export class NormalizedPresentationViewer {
       .catch((error: unknown) => {
         if (!this.destroyed) this.callbacks.onNodeError?.(nodeId, error);
       });
+    resources?.add(pending);
+  }
+
+  private applyImageAsset(
+    image: HTMLImageElement,
+    assetId: string,
+    fallbackAssetId: string | undefined,
+    nodeId: string,
+  ): void {
+    if (!fallbackAssetId || fallbackAssetId === assetId) {
+      this.applyAsset(assetId, (url) => (image.src = url), nodeId);
+      return;
+    }
+    const resources = this.activeMountResources;
+    const generation = this.renderGeneration;
+    const candidates = [assetId, fallbackAssetId];
+    let index = 0;
+    let lastError: unknown;
+    const lifetime = this.activeMountLifetime;
+    const active = () => this.isRenderActive(generation) && !lifetime?.disposed;
+    const next = async (): Promise<void> => {
+      while (active() && index < candidates.length) {
+        const candidate = candidates[index++];
+        if (!candidate) continue;
+        const asset = this.presentation.assets[candidate];
+        try {
+          const url = asset ? await this.assetUrl(asset) : undefined;
+          if (!active()) return;
+          if (url) {
+            image.src = url;
+            return;
+          }
+          lastError = new Error('Image asset is unavailable.');
+        } catch (error: unknown) {
+          lastError = error;
+        }
+      }
+      image.onerror = null;
+      if (active()) this.callbacks.onNodeError?.(nodeId, lastError);
+    };
+    image.onerror = () => {
+      lastError = new Error('Image asset could not be decoded.');
+      const pending = next();
+      resources?.add(pending);
+    };
+    image.onload = () => {
+      image.onerror = null;
+      image.onload = null;
+    };
+    const pending = next();
+    resources?.add(pending);
+  }
+
+  private applyPictureArtwork(image: HTMLImageElement, node: Extract<SlideNode, { type: 'image' }>): void {
+    const generation = this.renderGeneration;
+    const resources = this.activeMountResources;
+    const lifetime = this.activeMountLifetime;
+    const active = () => this.isRenderActive(generation) && !lifetime?.disposed;
+    const candidates = [
+      node.pictureSvg ? { svg: node.pictureSvg, paintBounds: node.paintBounds } : undefined,
+      node.fallbackPicture,
+    ];
+    const pending = (async () => {
+      let lastError: unknown;
+      for (const candidate of candidates) {
+        if (!candidate || !active()) continue;
+        try {
+          const url = await this.assetCache.pictureUrl(candidate.svg);
+          if (!active()) return;
+          applyPicturePaintBounds(image, candidate.paintBounds ?? undefined, !!node.ink);
+          image.src = url;
+          return;
+        } catch (error: unknown) {
+          lastError = error;
+        }
+      }
+      if (active()) this.callbacks.onNodeError?.(node.id, lastError);
+    })();
     resources?.add(pending);
   }
 
@@ -1352,25 +1572,49 @@ export class NormalizedPresentationViewer {
       scaleY?: number;
     },
   ): HTMLElement {
-    const paintedPicture = node.type === 'image' && !!node.pictureSvg;
+    const paintedPicture = node.type === 'image' && !!(node.pictureSvg || node.fallbackPicture);
     const paintedShape = node.type === 'shape' && !!node.shapeSvg;
-    const href = safeHyperlink(node.hyperlink);
+    const paintedInk = node.type === 'image' && !!node.ink && !!node.pictureSvg;
+    const sourceSlide = this.renderingSlideIndex ?? this.currentSlideIndex;
+    const action = node.clickAction;
+    const internalSlide = action?.external === false && action.target
+      ? this.presentation.slides.findIndex((slide) => slide.sourcePart === action.target)
+      : -1;
+    const jump = action?.action?.match(/^ppaction:\/\/hlinkshowjump\?jump=(firstslide|lastslide|nextslide|previousslide)$/)?.[1];
+    const jumpSlide = jump === 'firstslide' ? 0
+      : jump === 'lastslide' ? this.slideCount - 1
+        : jump === 'nextslide' ? Math.min(this.slideCount - 1, sourceSlide + 1)
+          : jump === 'previousslide' ? Math.max(0, sourceSlide - 1) : undefined;
+    const slideTarget = internalSlide >= 0 ? internalSlide : jumpSlide;
+    const href = action?.external === false || node.type === 'media' ? undefined : safeHyperlink(node.hyperlink);
     const element = document.createElement(href ? 'a' : 'div');
     element.dataset.rpvNodeId = node.id;
     element.style.position = 'absolute';
     element.style.left = `${((node.transform.x - coordinate.x) / coordinate.width) * 100}%`;
     element.style.top = `${((node.transform.y - coordinate.y) / coordinate.height) * 100}%`;
-    element.style.width = `${((paintedShape && node.transform.width === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleX || 1) : node.transform.width) / coordinate.width) * 100}%`;
-    element.style.height = `${((paintedShape && node.transform.height === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleY || 1) : node.transform.height) / coordinate.height) * 100}%`;
+    element.style.width = `${(((paintedShape || paintedInk) && node.transform.width === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleX || 1) : node.transform.width) / coordinate.width) * 100}%`;
+    element.style.height = `${(((paintedShape || paintedInk) && node.transform.height === 0 ? EMU_PER_CSS_PIXEL / (coordinate.scaleY || 1) : node.transform.height) / coordinate.height) * 100}%`;
     element.style.boxSizing = 'border-box';
     const transforms = [`rotate(${node.transform.rotation ?? 0}deg)`];
     if (node.transform.flipHorizontal) transforms.push('scaleX(-1)');
     if (node.transform.flipVertical) transforms.push('scaleY(-1)');
-    element.style.transform = paintedPicture || paintedShape ? '' : transforms.join(' ');
+    element.style.transform = (paintedPicture && !paintedInk) || paintedShape ? '' : transforms.join(' ');
     element.style.transformOrigin = 'center';
     if (node.hidden) element.hidden = true;
     if (!paintedPicture && node.opacity !== undefined) element.style.opacity = String(node.opacity);
     if (node.altText) element.setAttribute('aria-label', node.altText);
+    if (node.accessibilityTitle) element.title = node.accessibilityTitle;
+    if (node.decorative && !href && slideTarget === undefined) element.setAttribute('aria-hidden', 'true');
+    if (slideTarget !== undefined) {
+      element.tabIndex = 0;
+      element.setAttribute('role', 'link');
+      element.style.cursor = 'pointer';
+      const navigate = () => { void this.goToSlide(slideTarget); };
+      element.addEventListener('click', (event) => { event.preventDefault(); navigate(); });
+      element.addEventListener('keydown', (event) => {
+        if (event instanceof KeyboardEvent && event.key === 'Enter') { event.preventDefault(); navigate(); }
+      });
+    }
     if (href && element instanceof HTMLAnchorElement) {
       element.href = href;
       element.target = '_blank';
@@ -1505,13 +1749,17 @@ export class NormalizedPresentationViewer {
       image.style.display = 'block';
       image.style.width = '100%';
       image.style.height = '100%';
-      if (node.pictureSvg) {
-        image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(node.pictureSvg)}`;
+      if (node.pictureSvg || node.fallbackPicture) {
+        if (node.fallbackPicture) {
+          this.applyPictureArtwork(image, node);
+        } else {
+          image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(node.pictureSvg!)}`;
+          applyPicturePaintBounds(image, node.paintBounds, !!node.ink);
+        }
         image.style.objectFit = 'fill';
-        applyPicturePaintBounds(image, node.paintBounds);
         element.style.overflow = 'visible';
       } else {
-        this.applyAsset(node.assetId, (url) => (image.src = url), node.id);
+        this.applyImageAsset(image, node.assetId, node.fallbackAssetId, node.id);
         image.style.objectFit = node.preserveAspectRatio === false ? 'fill' : 'contain';
         element.style.overflow = 'hidden';
         if (node.crop) applyCroppedImage(image, node.crop);
@@ -1559,6 +1807,7 @@ export class NormalizedPresentationViewer {
           tr.style.height = `${(node.rowHeights[rowIndex]! / totalRowHeight) * 100}%`;
         }
         for (const cell of row) {
+          if (cell.merge?.horizontal || cell.merge?.vertical) continue;
           const td = tr.insertCell();
           td.colSpan = cell.colSpan ?? 1;
           td.rowSpan = cell.rowSpan ?? 1;
@@ -1607,15 +1856,84 @@ export class NormalizedPresentationViewer {
     } else if (node.type === 'chart') {
       element.append(this.createChart(node));
     } else if (node.type === 'media') {
-      const media = document.createElement(node.mediaType === 'audio' ? 'audio' : 'video');
-      media.controls = true;
-      media.style.width = '100%';
-      media.style.height = '100%';
-      if (node.assetId) this.applyAsset(node.assetId, (url) => (media.src = url), node.id);
-      if (node.posterAssetId && media instanceof HTMLVideoElement) {
-        this.applyAsset(node.posterAssetId, (url) => (media.poster = url), node.id);
+      const poster = node.poster ? this.createNode(node.poster, {
+        ...node.transform, scaleX: coordinate.scaleX ?? 1, scaleY: coordinate.scaleY ?? 1,
+      }) : undefined;
+      if (poster) {
+        element.style.transform = '';
+        element.append(poster);
       }
-      element.append(media);
+      const externalSource = node.sourceUrl && /^https?:\/\//i.test(node.sourceUrl)
+        ? safeHyperlink(node.sourceUrl) : undefined;
+      if (node.mediaType === 'audio' || node.mediaType === 'video') {
+        const media = document.createElement(node.mediaType);
+        media.controls = true;
+        media.preload = 'none';
+        media.style.width = '100%';
+        media.style.height = '100%';
+        if (poster) media.style.transform = transforms.join(' ');
+        if (node.assetId) this.applyAsset(node.assetId, (url) => (media.src = url), node.id);
+        else if (externalSource) media.src = externalSource;
+        if (node.posterAssetId && media instanceof HTMLVideoElement) {
+          this.applyAsset(node.posterAssetId, (url) => (media.poster = url), node.id);
+        }
+        const start = Math.max(0, (node.playback?.trimStartMs ?? 0) / 1000);
+        const trimEnd = Math.max(0, (node.playback?.trimEndMs ?? 0) / 1000);
+        media.addEventListener('loadedmetadata', () => {
+          if (Number.isFinite(media.duration) && start < media.duration) media.currentTime = start;
+        });
+        media.addEventListener('play', () => {
+          if (!Number.isFinite(media.duration)) return;
+          const end = Math.max(0, media.duration - trimEnd);
+          if (end <= start) media.pause();
+          else if (media.currentTime < start || media.currentTime >= end) media.currentTime = start;
+        });
+        media.addEventListener('seeking', () => {
+          if (!Number.isFinite(media.duration)) return;
+          const end = Math.max(0, media.duration - trimEnd);
+          if (start < end && media.currentTime < start) media.currentTime = start;
+          else if (media.currentTime > end) media.currentTime = end;
+        });
+        media.addEventListener('timeupdate', () => {
+          if (Number.isFinite(media.duration) && trimEnd > 0 && media.currentTime >= media.duration - trimEnd) media.pause();
+        });
+        element.append(media);
+        if (poster) {
+          media.hidden = true;
+          const play = document.createElement('button');
+          play.type = 'button';
+          play.textContent = 'Play';
+          play.setAttribute('aria-label', `Play ${node.altText || node.name || node.mediaType}`);
+          play.style.cssText = 'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);cursor:pointer';
+          play.addEventListener('click', (event) => {
+            event.stopPropagation();
+            poster.hidden = true;
+            play.remove();
+            media.hidden = false;
+            void Promise.resolve(media.play()).catch(() => { media.setAttribute('aria-label', 'Media playback unavailable'); });
+          });
+          element.append(play);
+        }
+      } else {
+        element.dataset.rpvEmbeddedObject = node.embeddedObject?.programId ?? node.mediaType;
+        const download = document.createElement('a');
+        download.textContent = 'Download embedded object';
+        download.style.cssText = 'position:absolute;left:0;bottom:0;background:white;color:#174ea6;padding:4px';
+        download.addEventListener('click', (event) => event.stopPropagation());
+        if (node.assetId) {
+          download.download = this.presentation.assets[node.assetId]?.fileName ?? 'embedded-object';
+          this.applyAsset(node.assetId, (url) => (download.href = url), node.id);
+          element.append(download);
+        } else if (externalSource) {
+          download.textContent = 'Open linked object';
+          download.href = externalSource;
+          download.target = '_blank';
+          download.rel = 'noreferrer noopener';
+          element.append(download);
+        } else if (!poster) {
+          element.textContent = 'Embedded object preview unavailable';
+        }
+      }
     } else if (node.type === 'unknown') {
       element.dataset.rpvUnsupportedFeature = node.feature;
       if (node.fallbackAssetId) {
@@ -1686,12 +2004,16 @@ export class NormalizedPresentationViewer {
     this.handlesByTarget.get(target)?.dispose();
     const resources = new Set<Promise<void>>();
     const previousResources = this.activeMountResources;
+    const lifetime = { disposed: false };
+    const previousLifetime = this.activeMountLifetime;
     this.activeMountResources = resources;
+    this.activeMountLifetime = lifetime;
     let slide: HTMLElement;
     try {
       slide = this.createSlide(index);
     } finally {
       this.activeMountResources = previousResources;
+      this.activeMountLifetime = previousLifetime;
     }
     const effectiveScale = scale ?? this.scaleForViewport(target);
     const wrapper = document.createElement('div');
@@ -1708,15 +2030,14 @@ export class NormalizedPresentationViewer {
     wrapper.append(slide);
     target.replaceChildren(wrapper);
     this.callbacks.onSlideRendered?.(index, slide);
-    let disposed = false;
     const handle: DisposableHandle = {
       element: slide,
       target,
       ready: Promise.all([...resources]).then(() => undefined),
       setScale,
       dispose: () => {
-        if (disposed) return;
-        disposed = true;
+        if (lifetime.disposed) return;
+        lifetime.disposed = true;
         wrapper.remove();
         this.mountedHandles.delete(handle);
         if (this.handlesByTarget.get(target) === handle) this.handlesByTarget.delete(target);

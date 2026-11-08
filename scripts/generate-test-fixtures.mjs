@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PptxGenJS from 'pptxgenjs';
@@ -260,3 +260,8 @@ const chartsFixturePath = path.join(outputDirectory, 'charts-showcase.pptx');
 await charts.writeFile({ fileName: chartsFixturePath });
 await copyFile(chartsFixturePath, path.join(playgroundPublic, 'charts-showcase.pptx'));
 console.log(chartsFixturePath);
+
+// Hand-written deck for parser-model coverage of transitions, timing, math,
+// fields, merged cells, click actions, and accessibility metadata.
+const { buildModelFeaturesDeck, MODEL_FEATURES_DECK_NAME } = await import('./model-features-deck.mjs');
+await writeFile(path.join(outputDirectory, MODEL_FEATURES_DECK_NAME), buildModelFeaturesDeck());

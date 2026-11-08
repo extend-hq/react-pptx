@@ -359,6 +359,10 @@ export interface ReactPptxViewerProps extends Omit<
 }
 
 export type {
+  CommentAnchor,
+  CommentMoniker,
+  CommentTask,
+  ModernComment,
   PicturePaintBounds,
   PresentationAsset,
   PresentationDocument,

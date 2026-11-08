@@ -193,6 +193,20 @@ provides the internal slide surface for advanced integrations and test harnesses
 
 Pictures, supported shapes, connectors, and saved SmartArt drawings use the shared Rust OfficeArt renderer. SmartArt text retains its saved text frame separately from the shape frame, including independent offsets, dimensions, rotation, and flips. Semantic data without a supported saved drawing remains an explicit layout fallback.
 
+### Presentation metadata
+
+The model carries PowerPoint data beyond the drawn slide so hosts can build their own
+behaviour on it. Slides, layouts and masters expose `transition` and `timing` (the parsed
+`p:transition` and `p:timing` parts, including animation nodes, targets and build lists),
+text runs expose `math` (Office Math with a MathML rendering) and `field` (slide numbers,
+dates and other fields with their cached text), table cells expose `merge`, and every node
+may carry `clickAction`, `hoverAction`, `editing` (locks and connector endpoints),
+`accessibilityTitle`, `description` and `decorative`. Media nodes expose `playback` trims
+and bookmarks, a `poster` frame, and `embeddedObject` details for OLE objects and
+controls. The viewer renders math as MathML, skips merged cells, navigates presentation
+jump and slide-link actions in place, and shows poster frames with a play control; it
+does not play transitions or animation timelines.
+
 `parsePresentation(source, { include3dModels: true })` includes original embedded 3D model bytes and content type, model and preview relationships, and scene XML in `ImageNode.model3d`. The option also works through `ReactPptxViewer`'s `parseOptions` and the parsing hook. It defaults to `false`; cached Office raster previews remain the rendered appearance. This metadata does not add an interactive 3D renderer.
 
 ## Cold-start thumbnails

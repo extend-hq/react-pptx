@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Update the bundled Rust parser to `rust-pptx` 0.1.7 (`rust-office-art` 0.1.6, `rust-office-charts` 0.1.8).
+- Expose the parser's presentation metadata in the model: slide, layout and master `transition` and `timing` (animation timelines and build lists), Office Math runs (`TextRun.math` with MathML), text fields (`TextRun.field`), merged table cells (`TableCell.merge`), click and hover actions, editing locks and connector endpoints, ink drawings, media playback trims, bookmarks and poster frames, embedded OLE objects and controls, modern comments, and accessibility titles, descriptions and decorative flags.
+- Render Office Math runs as sanitized MathML, skip merged table cells, turn presentation jump and slide-link actions into in-viewer navigation, show media poster frames with a play control and honour trim points, offer embedded objects as downloads, and paint `fallbackPicture` artwork when the primary picture is unavailable.
+- Add the hand-written `model-features.pptx` fixture and parser contract tests for the new fields.
 - Remove the TypeScript chart fallback renderer. Charts are rendered to SVG by the bundled Rust parser (`rust-office-charts`), so `d3-*`, `regl`, `topojson-client`, and the TopoJSON atlas chunk are gone from the package.
 - Bundle TanStack Virtual; the package now has no runtime dependencies beyond its React peers.
 - Accept picture fills, `<desc>` notes, markers, and filter primitives in parser-rendered chart SVG instead of dropping to a placeholder.

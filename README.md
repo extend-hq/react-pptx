@@ -54,7 +54,7 @@ Parser and shared rendering fixes belong in [Rust Office](https://github.com/ext
 ## Rendering boundaries
 
 - Legacy `.ppt` is parsed directly in the browser. Unsupported content emits `degraded-rendering` warnings through `onWarning` / `showDiagnostics`; see [legacy format support](docs/legacy-ppt.md).
-- Viewing is static. Animation timelines, macros, active OLE controls, password decryption, media playback and authoring/export are outside the supported scope.
+- Viewing is static. Slide transitions and animation timelines are exposed on the model (`transition`, `timing`) but not played; macros, active OLE controls, password decryption and authoring/export are outside the supported scope. Embedded audio and video play through native controls, and embedded objects are offered as downloads.
 - SmartArt uses saved drawings; 3D models display saved Office previews. `include3dModels` optionally exposes original assets and scene metadata. See [OfficeArt visuals](packages/react-viewer/README.md#officeart-visuals).
 
 ## Live demo

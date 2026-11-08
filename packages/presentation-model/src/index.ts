@@ -1,3 +1,6 @@
+import type { SlideTiming, SlideTransition } from './animation';
+export * from './animation';
+
 export type PresentationFormat = 'pptx' | 'ppt';
 
 export interface PresentationSize {
@@ -100,8 +103,26 @@ export interface LineStyle {
   endArrow?: string;
 }
 
-export interface TextRun {
+export interface MathElement {
+  name: string;
+  namespace?: string;
+  attributes?: { name: string; namespace?: string; value: string }[];
+  children?: MathElement[];
+  text?: string;
+}
+
+export interface OfficeMath {
   text: string;
+  display: boolean;
+  sourceXml: string;
+  root?: MathElement;
+  justification?: string;
+  mathMl: string;
+  fontSizePt?: number;
+  unsupported?: string[];
+}
+
+export interface TextRunProperties {
   fontFamily?: string;
   /** Explicit East Asian typeface declared for this run. */
   eastAsianFontFamily?: string;
@@ -125,6 +146,33 @@ export interface TextRun {
   /** Minimum font size, in points, at which pair kerning is enabled. */
   kerningThresholdPt?: number;
   hyperlink?: string;
+}
+
+export interface TextRun extends TextRunProperties {
+  math?: OfficeMath;
+  text: string;
+  field?: TextField;
+}
+
+export interface TextField {
+  id?: string;
+  type?: string;
+  hasCachedText: boolean;
+  paragraphProperties?: TextFieldParagraphProperties;
+  sourcePart?: string;
+  sourceXml: string;
+}
+
+export interface TextFieldParagraphProperties extends Omit<TextParagraph, 'runs'> {
+  marginRightEmu?: number;
+  fontAlignment?: string;
+  bulletNone?: boolean;
+  bulletColor?: ColorValue;
+  bulletColorFollowText?: boolean;
+  bulletFontFollowText?: boolean;
+  bulletSizeFollowText?: boolean;
+  bulletImageAssetId?: string;
+  defaultRunProperties?: TextRunProperties;
 }
 
 export interface TextTabStop {
@@ -176,6 +224,22 @@ export interface TextAutofit {
   lineSpacingReduction?: number;
 }
 
+export interface ObjectAction {
+  relationshipId?: string;
+  target?: string;
+  external?: boolean;
+  action?: string;
+  tooltip?: string;
+  targetFrame?: string;
+  invalidUrl?: string;
+  history?: boolean;
+  highlightClick?: boolean;
+  endSound?: boolean;
+  soundAssetId?: string;
+  soundName?: string;
+  soundBuiltin?: boolean;
+}
+
 export interface BaseSlideNode {
   id: string;
   name?: string;
@@ -184,7 +248,78 @@ export interface BaseSlideNode {
   opacity?: number;
   hyperlink?: string;
   altText?: string;
+  accessibilityTitle?: string;
+  description?: string;
+  decorative?: boolean;
+  clickAction?: ObjectAction;
+  hoverAction?: ObjectAction;
   sourcePart?: string;
+  sourceId?: string;
+  editing?: ObjectEditing;
+}
+
+export interface ObjectEditing {
+  kind: 'shape' | 'connector' | 'picture' | 'group' | 'graphicFrame' | 'contentPart';
+  locks?: ObjectLocks;
+  connector?: ConnectorConnections;
+  textBox?: boolean;
+  preferRelativeResize?: boolean;
+  isComment?: boolean;
+  sourceXml: string;
+}
+
+export interface ObjectLocks {
+  noGrouping?: boolean;
+  noUngrouping?: boolean;
+  noSelection?: boolean;
+  noRotation?: boolean;
+  noChangeAspect?: boolean;
+  noMove?: boolean;
+  noResize?: boolean;
+  noEditPoints?: boolean;
+  noAdjustHandles?: boolean;
+  noChangeArrowheads?: boolean;
+  noChangeShapeType?: boolean;
+  noTextEdit?: boolean;
+  noCrop?: boolean;
+  noDrilldown?: boolean;
+}
+
+export interface ConnectorConnections {
+  start?: ConnectorEndpoint;
+  end?: ConnectorEndpoint;
+}
+
+export interface ConnectorEndpoint {
+  shapeId: number;
+  connectionSite: number;
+}
+
+/** Resolves an endpoint within its original part; ambiguous IDs remain unresolved. */
+export function resolveConnectorEndpoint(
+  nodes: readonly SlideNode[],
+  connector: BaseSlideNode,
+  endpoint: ConnectorEndpoint,
+): SlideNode | undefined {
+  if (!connector.sourcePart || !Number.isInteger(endpoint.shapeId)
+    || endpoint.shapeId < 0 || endpoint.shapeId > 0xffffffff) return undefined;
+  let match: SlideNode | undefined;
+  let ambiguous = false;
+  const visit = (children: readonly SlideNode[]): void => {
+    for (const node of children) {
+      if (node.sourcePart === connector.sourcePart && node.sourceId !== undefined
+        && /^[\t\n\r ]*[+-]?[0-9]+[\t\n\r ]*$/.test(node.sourceId)) {
+        const id = Number(node.sourceId);
+        if (id === endpoint.shapeId) {
+          if (match) ambiguous = true;
+          else match = node;
+        }
+      }
+      if (node.type === 'group') visit(node.children);
+    }
+  };
+  visit(nodes);
+  return ambiguous ? undefined : match;
 }
 
 export interface ShapeNode extends BaseSlideNode {
@@ -244,11 +379,26 @@ export interface Model3D {
 export interface ImageNode extends BaseSlideNode {
   type: 'image';
   model3d?: Model3D;
+  ink?: {
+    assetId?: string;
+    sourceXml?: string;
+    drawing?: {
+      sourceBounds: { x: number; y: number; width: number; height: number };
+      strokes: Array<{
+        id?: string;
+        timeOffset?: string;
+        points: Array<{ x: number; y: number; pressure: number; contact: boolean }>;
+        brush: { width: number; height: number; color: string; opacity: number; rectangle: boolean; pencil: boolean; ignorePressure: boolean };
+      }>;
+    };
+  };
   assetId: string;
   crop?: { top: number; right: number; bottom: number; left: number };
+  fallbackAssetId?: string;
   preserveAspectRatio?: boolean;
   effects?: ImageEffects;
   pictureSvg?: string;
+  fallbackPicture?: { svg: string; paintBounds?: PicturePaintBounds | null };
   paintBounds?: PicturePaintBounds;
   sourceXml?: string;
 }
@@ -260,6 +410,11 @@ export interface GroupNode extends BaseSlideNode {
 }
 
 export interface TableCell {
+  merge?: {
+    horizontal: boolean;
+    vertical: boolean;
+    origin?: { row: number; column: number };
+  };
   rowSpan?: number;
   colSpan?: number;
   fill?: FillStyle;
@@ -306,9 +461,38 @@ export interface ChartNode extends BaseSlideNode {
 
 export interface MediaNode extends BaseSlideNode {
   type: 'media';
-  mediaType: 'audio' | 'video' | 'ole' | 'unknown';
+  mediaType: 'audio' | 'video' | 'ole' | 'control' | 'unknown';
   assetId?: string;
   posterAssetId?: string;
+  sourceUrl?: string;
+  poster?: ImageNode;
+  playback?: {
+    trimStartMs?: number;
+    /** Duration removed from the end of the media. */
+    trimEndMs?: number;
+    fadeInMs?: number;
+    fadeOutMs?: number;
+    bookmarks?: { name: string; timeMs: number }[];
+  };
+  embeddedObject?: {
+    control?: {
+      classId?: string;
+      persistence?: string;
+      sourceXml?: string;
+      binaryAssetIds?: string[];
+      properties?: Array<{ name: string; value?: string }>;
+    };
+    programId?: string;
+    name?: string;
+    relationshipId?: string;
+    linked: boolean;
+    showAsIcon?: boolean;
+    previewWidthEmu?: number;
+    previewHeightEmu?: number;
+    followColorScheme?: string;
+    updateAutomatic?: boolean;
+  };
+  sourceXml?: string;
 }
 
 export interface UnknownNode extends BaseSlideNode {
@@ -333,6 +517,8 @@ export interface SlideMaster {
   id: string;
   name?: string;
   themeId?: string;
+  transition?: SlideTransition;
+  timing?: SlideTiming;
   nodes: SlideNode[];
 }
 
@@ -340,20 +526,65 @@ export interface SlideLayout {
   id: string;
   name?: string;
   masterId?: string;
+  transition?: SlideTransition;
+  timing?: SlideTiming;
   nodes: SlideNode[];
 }
 
 export interface SlideNote {
   text: string;
+  paragraphs?: TextParagraph[];
 }
 
 export interface SlideComment {
   id: string;
   author?: string;
+  authorId?: string;
+  authorInitials?: string;
+  sourceIndex?: number;
+  sourcePart?: string;
   text: string;
+  paragraphs?: TextParagraph[];
+  replies?: SlideComment[];
+  modern?: ModernComment;
   createdAt?: string;
+  modifiedAt?: string;
+  position?: { x: number; y: number; unit: 'eighthPoint' };
   x?: number;
   y?: number;
+}
+
+export interface ModernComment {
+  status: string;
+  authorUserId?: string;
+  authorProviderId?: string;
+  authorExtensionsXml?: string;
+  anchors?: CommentAnchor[];
+  positionEmu?: { x: number; y: number; sourceX: string; sourceY: string };
+  task?: CommentTask;
+  extensionsXml?: string;
+}
+
+export interface CommentTask {
+  startDate?: string;
+  dueDate?: string;
+  assignedTo: string[];
+  title: string;
+  completion: string;
+  completionFraction?: number;
+}
+
+export interface CommentAnchor {
+  kind: 'slide' | 'drawingElement' | 'textRange' | 'unknown';
+  monikers: CommentMoniker[];
+}
+
+export interface CommentMoniker {
+  namespace: string;
+  name: string;
+  attributes: Record<string, string>;
+  children?: CommentMoniker[];
+  text?: string;
 }
 
 export interface PresentationSlide {
@@ -364,6 +595,8 @@ export interface PresentationSlide {
   masterId?: string;
   layoutId?: string;
   background?: FillStyle;
+  transition?: SlideTransition;
+  timing?: SlideTiming;
   nodes: SlideNode[];
   notes?: SlideNote[];
   comments?: SlideComment[];
@@ -418,6 +651,7 @@ export function collectSlideText(slide: PresentationSlide): string {
       } else if (node.type === 'table') {
         for (const row of node.rows) {
           for (const cell of row) {
+            if (cell.merge?.horizontal || cell.merge?.vertical) continue;
             chunks.push(...cell.paragraphs.map((p) => p.runs.map((run) => run.text).join('')));
           }
         }
