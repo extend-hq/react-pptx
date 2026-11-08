@@ -1,6 +1,6 @@
 # @extend-ai/react-pptx
 
-## Unreleased
+## 0.3.0
 
 - Update the bundled Rust parser to `rust-pptx` 0.1.7 (`rust-office-art` 0.1.6, `rust-office-charts` 0.1.8).
 - Expose the parser's presentation metadata in the model: slide, layout and master `transition` and `timing` (animation timelines and build lists), Office Math runs (`TextRun.math` with MathML), text fields (`TextRun.field`), merged table cells (`TableCell.merge`), click and hover actions, editing locks and connector endpoints, ink drawings, media playback trims, bookmarks and poster frames, embedded OLE objects and controls, modern comments, and accessibility titles, descriptions and decorative flags.
@@ -45,7 +45,7 @@
 
 - Improve PowerPoint import fidelity for word spacing, hyperlink styling, diagonal stripe shapes, and straight connectors, including zero-width vertical timeline stems.
 
-## Unreleased
+## 0.3.0
 
 - Add a cold-start `createPptxThumbnailRenderer` API with package-owned PNG, canvas, ImageBitmap,
   and SVG outputs, explicit thumbnail font policy, cancellation, bounded concurrency, shared
