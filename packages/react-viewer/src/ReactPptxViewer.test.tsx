@@ -218,10 +218,16 @@ describe('ReactPptxViewer adapter lifecycle', () => {
     });
 
     const filmstrip = host.querySelector<HTMLElement>('.rpv-filmstrip')!;
-    await act(async () => {
-      filmstrip.scrollTop = 12_000;
-      filmstrip.dispatchEvent(new Event('scroll'));
-    });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await act(async () => {
+        filmstrip.scrollTop = 12_000;
+        filmstrip.dispatchEvent(new Event('scroll'));
+        await vi.runOnlyPendingTimersAsync();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
     await waitFor(() => {
       expect(host.querySelector('[aria-label="Go to slide 100"]')).not.toBeNull();
       expect(host.querySelectorAll('.rpv-filmstrip__item').length).toBeLessThan(
