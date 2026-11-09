@@ -62,3 +62,7 @@ Parser and shared rendering fixes belong in [Rust Office](https://github.com/ext
 [![PowerPoint viewer with a presentation slide and navigation controls](./docs/readme-assets/extend-ui-pptx-viewer.png)](https://www.extend.ai/ui/docs/components/pptx-viewer)
 
 Click the screenshot for the viewer demo and integration docs. [MIT license](LICENSE) · [Third-party notices](THIRD_PARTY_NOTICES.md).
+
+### Block citations
+
+Extract paragraph, table-cell and word blocks with `extractPresentationBlocks`, resolve their source references with `resolvePptxSourceGeometry`, and render overlays with `PptxBlockHighlights`. See the [citation API and source-build instructions](docs/citations.md).

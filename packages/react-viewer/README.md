@@ -303,3 +303,13 @@ the metadata stable while pausing and disposing thumbnail rendering. For large d
 the rail against its actual scroll element: mount `containerRef` only for virtual rows, pass those
 rows through `renderWindow.visibleSlideIndexes`, and use `prefetchSlideIndexes` to warm nearby
 slides. The built-in `showThumbnails` filmstrip follows the same windowed behavior.
+
+## Block and word citations
+
+Version 0.4.0 bundles the Rust 0.2.0 block extractor. Call `extractPresentationBlocks(parsed.document, { includeWords: true })`, then pass its blocks or words to `PptxBlockHighlights` or `PptxWordHighlights`. The components accept a viewer `rootRef`, selected target, optional multiple targets, color and an `onGeometry` callback for the selected target, following the React DOCX API.
+
+`resolvePptxSourceGeometry`, `resolvePptxBlockGeometries` and `resolvePptxWordGeometries` return axis-aligned slide-relative fragments with explicit rendered, unmounted, invisible or unresolved states. `revealPptxSource(controller, root, ref)` mounts and navigates to the referenced slide. `normalizedPptxBoundingBox` converts a fragment to fractional slide coordinates.
+
+References carry document identity, slide and node paths, optional cell/paragraph indices and UTF-16 text offsets. Preserve them with extracted content; matching visible text alone cannot distinguish repeated occurrences. Geometry is limited to mounted slide content. Notes, chart-label subranges and mathematical subranges do not receive invented rectangles.
+
+See the [citation guide](https://github.com/extend-hq/react-pptx/blob/main/docs/citations.md) for usage and the playground Blocks view.

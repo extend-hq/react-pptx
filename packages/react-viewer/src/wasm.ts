@@ -1,5 +1,5 @@
 import type { WasmParseOptions } from '@extend-ai/react-pptx-wasm';
-import type { PresentationDocument } from '@extend-ai/react-pptx-model';
+import type { ExtractPresentationBlocksOptions, StructuredPresentation, PresentationDocument } from '@extend-ai/react-pptx-model';
 import { PptxViewerError } from './errors';
 
 export type WasmSource =
@@ -13,6 +13,7 @@ export type WasmSource =
 export type WorkerWasmSource = string | ArrayBuffer | WebAssembly.Module;
 
 interface WasmRuntimeModule {
+  extractPresentationBlocks?: (document: PresentationDocument, options?: ExtractPresentationBlocksOptions) => unknown;
   default?: (source?: unknown) => Promise<unknown> | unknown;
   initWasm?: (source?: unknown) => Promise<unknown> | unknown;
   init?: (source?: unknown) => Promise<unknown> | unknown;
@@ -208,4 +209,11 @@ async function parseInWorker(
       settle(() => reject(error));
     }
   });
+}
+
+export async function extractPresentationBlocks(document: PresentationDocument, options: ExtractPresentationBlocksOptions = {}): Promise<StructuredPresentation> {
+  await initWasm();
+  const runtime = await loadRuntime();
+  if (!runtime.extractPresentationBlocks) throw new Error('This parser runtime does not support presentation block extraction.');
+  return await runtime.extractPresentationBlocks(document, options) as StructuredPresentation;
 }

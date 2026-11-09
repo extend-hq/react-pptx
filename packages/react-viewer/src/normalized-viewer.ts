@@ -466,9 +466,15 @@ function createTextRunElement(
   run: TextRun,
   paragraph: TextParagraph,
   fontScale: number,
+  sourceStart?: number,
 ): HTMLElement {
   const href = safeHyperlink(run.hyperlink);
   const span = document.createElement(href ? 'a' : 'span');
+  if (sourceStart !== undefined) {
+    span.dataset.rpvSourceStart = String(sourceStart);
+    span.dataset.rpvSourceEnd = String(sourceStart + run.text.length);
+    span.dataset.rpvSourceText = run.text;
+  }
   const math = run.math ? createMathElement(run.math.mathMl) : undefined;
   if (math) {
     span.append(math);
@@ -561,7 +567,9 @@ function appendExplicitTabLayout(
     previous = stop.positionEmu;
   }
   const template = `${widths.map((width) => `${width}px`).join(' ')} minmax(0, 1fr)`;
-  for (const cells of splitRunsIntoTabRows(paragraph.runs)) {
+  let sourceOffset = 0;
+  for (const [rowIndex, cells] of splitRunsIntoTabRows(paragraph.runs).entries()) {
+    if (rowIndex > 0) sourceOffset += 1;
     const row = document.createElement('span');
     row.dataset.rpvTabRow = '';
     row.style.display = 'grid';
@@ -570,6 +578,7 @@ function appendExplicitTabLayout(
     row.style.minWidth = '0';
     row.style.minHeight = '1em';
     cells.forEach((runs, cellIndex) => {
+      if (cellIndex > 0) sourceOffset += 1;
       const cell = document.createElement('span');
       cell.dataset.rpvTabCell = String(cellIndex);
       cell.style.minWidth = '0';
@@ -589,7 +598,10 @@ function appendExplicitTabLayout(
           cell.style.justifySelf = 'end';
         }
       }
-      for (const run of runs) cell.append(createTextRunElement(run, paragraph, fontScale));
+      for (const run of runs) {
+        cell.append(createTextRunElement(run, paragraph, fontScale, sourceOffset));
+        sourceOffset += run.text.length;
+      }
       row.append(cell);
     });
     line.append(row);
@@ -610,7 +622,8 @@ function applyText(
   container.style.overflowWrap = 'normal';
   for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
     const line = document.createElement('div');
-    line.dataset.rpvTextParagraph = '';
+    line.dataset.rpvTextParagraph = String(paragraphIndex);
+    line.dataset.rpvSourceText = paragraph.runs.map(run => run.text).join('');
     line.style.minWidth = '0';
     line.style.fontWeight = '400';
     line.style.lineHeight = String(POWERPOINT_SINGLE_LINE_HEIGHT * (1 - lineSpacingReduction));
@@ -684,8 +697,11 @@ function applyText(
     const usedExplicitTabs =
       !paragraph.bullet && appendExplicitTabLayout(line, paragraph, fontScale);
     if (!usedExplicitTabs) {
-      for (const run of paragraph.runs)
-        line.append(createTextRunElement(run, paragraph, fontScale));
+      let sourceOffset = 0;
+      for (const run of paragraph.runs) {
+        line.append(createTextRunElement(run, paragraph, fontScale, sourceOffset));
+        sourceOffset += run.text.length;
+      }
     }
     container.append(line);
   }
@@ -1571,6 +1587,7 @@ export class NormalizedPresentationViewer {
       scaleX?: number;
       scaleY?: number;
     },
+    sourcePath?: string,
   ): HTMLElement {
     const paintedPicture = node.type === 'image' && !!(node.pictureSvg || node.fallbackPicture);
     const paintedShape = node.type === 'shape' && !!node.shapeSvg;
@@ -1589,6 +1606,9 @@ export class NormalizedPresentationViewer {
     const href = action?.external === false || node.type === 'media' ? undefined : safeHyperlink(node.hyperlink);
     const element = document.createElement(href ? 'a' : 'div');
     element.dataset.rpvNodeId = node.id;
+    if (sourcePath !== undefined) element.dataset.rpvNodePath = sourcePath;
+    if (node.sourcePart) element.dataset.rpvSourcePart = node.sourcePart;
+    if (node.sourceId) element.dataset.rpvSourceId = node.sourceId;
     element.style.position = 'absolute';
     element.style.left = `${((node.transform.x - coordinate.x) / coordinate.width) * 100}%`;
     element.style.top = `${((node.transform.y - coordinate.y) / coordinate.height) * 100}%`;
@@ -1775,13 +1795,13 @@ export class NormalizedPresentationViewer {
       };
       const scaleX = ((coordinate.scaleX ?? 1) * node.transform.width) / childCoordinate.width;
       const scaleY = ((coordinate.scaleY ?? 1) * node.transform.height) / childCoordinate.height;
-      for (const child of node.children)
+      for (const [childIndex, child] of node.children.entries())
         element.append(
           this.createNode(child, {
             ...childCoordinate,
             scaleX: Number.isFinite(scaleX) && scaleX > 0 ? scaleX : (coordinate.scaleX ?? 1),
             scaleY: Number.isFinite(scaleY) && scaleY > 0 ? scaleY : (coordinate.scaleY ?? 1),
-          }),
+          }, sourcePath === undefined ? undefined : `${sourcePath}.${childIndex}`),
         );
     } else if (node.type === 'table') {
       const table = document.createElement('table');
@@ -1806,9 +1826,11 @@ export class NormalizedPresentationViewer {
         if (totalRowHeight && node.rowHeights?.[rowIndex] !== undefined) {
           tr.style.height = `${(node.rowHeights[rowIndex]! / totalRowHeight) * 100}%`;
         }
-        for (const cell of row) {
+        for (const [columnIndex, cell] of row.entries()) {
           if (cell.merge?.horizontal || cell.merge?.vertical) continue;
           const td = tr.insertCell();
+          td.dataset.rpvCellRow = String(rowIndex);
+          td.dataset.rpvCellColumn = String(columnIndex);
           td.colSpan = cell.colSpan ?? 1;
           td.rowSpan = cell.rowSpan ?? 1;
           if (hasFixedRowHeights) {
@@ -1956,6 +1978,9 @@ export class NormalizedPresentationViewer {
     const element = document.createElement('section');
     element.className = 'rpv-normalized-slide';
     element.dataset.rpvSlideIndex = String(index);
+    element.dataset.rpvSlideId = slide.id;
+    element.dataset.rpvDocumentId = this.presentation.documentId ?? '';
+    if (slide.sourcePart) element.dataset.rpvSourcePart = slide.sourcePart;
     element.dataset.rpvSlideHidden = String(Boolean(slide.hidden));
     element.setAttribute('aria-label', `Slide ${index + 1} of ${this.slideCount}`);
     element.style.position = 'relative';
@@ -1970,7 +1995,7 @@ export class NormalizedPresentationViewer {
     if (slide.background && slide.background.type !== 'none') {
       this.applyFill(element, slide.background, slide.id);
     }
-    for (const node of slide.nodes) {
+    for (const [nodeIndex, node] of slide.nodes.entries()) {
       try {
         element.append(
           this.createNode(node, {
@@ -1978,7 +2003,7 @@ export class NormalizedPresentationViewer {
             y: 0,
             width: this.presentation.size.widthEmu,
             height: this.presentation.size.heightEmu,
-          }),
+          }, String(nodeIndex)),
         );
       } catch (error) {
         this.callbacks.onNodeError?.(node.id, error);
@@ -1999,7 +2024,7 @@ export class NormalizedPresentationViewer {
     };
   }
 
-  private mount(index: number, target: HTMLElement, scale?: number): DisposableHandle {
+  private mount(index: number, target: HTMLElement, scale?: number, thumbnail = false): DisposableHandle {
     if (this.destroyed) return this.emptyHandle(target);
     this.handlesByTarget.get(target)?.dispose();
     const resources = new Set<Promise<void>>();
@@ -2011,6 +2036,7 @@ export class NormalizedPresentationViewer {
     let slide: HTMLElement;
     try {
       slide = this.createSlide(index);
+      slide.dataset.rpvCitationSurface = thumbnail ? 'thumbnail' : 'main';
     } finally {
       this.activeMountResources = previousResources;
       this.activeMountLifetime = previousLifetime;
@@ -2616,7 +2642,7 @@ export class NormalizedPresentationViewer {
     options: { width?: number } = {},
   ): DisposableHandle {
     if (this.destroyed || index < 0 || index >= this.slideCount) return this.emptyHandle(target);
-    return this.mount(index, target, (options.width ?? 144) / this.naturalSlideWidth);
+    return this.mount(index, target, (options.width ?? 144) / this.naturalSlideWidth, true);
   }
   async highlightSearchResult(
     result: PresentationSearchResult,

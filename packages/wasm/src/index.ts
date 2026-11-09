@@ -36,3 +36,11 @@ export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt'
 }
 
 export { parsePresentation as parse_presentation };
+
+export async function extractPresentationBlocks(document: unknown, options?: { includeWords?: boolean; includeNotes?: boolean }): Promise<unknown> {
+  await initWasm();
+  const runtime = await runtimePromise!;
+  const extract = (runtime as unknown as { extract_presentation_blocks?: (document: unknown, options?: unknown) => unknown }).extract_presentation_blocks;
+  if (!extract) throw new Error('This runtime does not support block extraction; build with the updated Rust parser.');
+  return extract(document, options);
+}

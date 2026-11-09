@@ -1,5 +1,12 @@
 # @extend-ai/react-pptx
 
+## 0.4.0
+
+- Bundle rust-pptx 0.2.0 and expose document-scoped object, paragraph, table-cell and UTF-16 word references.
+- Add `extractPresentationBlocks`, `flattenPresentationBlocks`, source/block/word geometry resolvers, `PptxBlockHighlights`, `PptxWordHighlights`, and `revealPptxSource`.
+- Resolve citations on mounted slide content, with explicit mismatch, invisibility and unsupported-range states. Exclude thumbnails and preserve references across zoom and nested transforms.
+- Add a virtualized playground Blocks panel with text, word and JSON views, type and text filters, hover highlighting, click-to-reveal, and a show-all toggle.
+
 ## 0.3.0
 
 - Update the bundled Rust parser to `rust-pptx` 0.1.7 (`rust-office-art` 0.1.6, `rust-office-charts` 0.1.8).

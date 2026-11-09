@@ -12,6 +12,7 @@ import {
   usePptxViewerThumbnails,
 } from '@extend-ai/react-pptx';
 import { Icon } from './icons';
+import { BlockInspector } from './BlockInspector';
 
 setWasmSource(wasmUrl);
 
@@ -48,6 +49,8 @@ function buildThumbnailRenderWindow(visibleIndexes: readonly number[], slideCoun
 export function App() {
   const viewer = usePptxViewer();
   const inputRef = useRef<HTMLInputElement>(null);
+  const blockRootRef = useRef<HTMLDivElement>(null);
+  const [blocksOpen, setBlocksOpen] = useState(false);
   const [source, setSource] = useState<PresentationSource>(SAMPLE_SOURCE);
   const [fileName, setFileName] = useState('viewer-smoke.pptx');
   const [mode, setMode] = useState<ViewerMode>('continuous');
@@ -101,6 +104,8 @@ export function App() {
     if (!file) return;
     const extension = file.name.split('.').pop()?.toLowerCase();
     if (extension !== 'ppt' && extension !== 'pptx') return;
+    setParsed(null);
+    setSlideCount(0);
     setSource(file);
     setFileName(file.name);
     setSlide(0);
@@ -127,6 +132,8 @@ export function App() {
   };
 
   const resetSample = () => {
+    setParsed(null);
+    setSlideCount(0);
     setSource(`${SAMPLE_SOURCE}?t=${Date.now()}`);
     setFileName('viewer-smoke.pptx');
     setSlide(0);
@@ -291,6 +298,15 @@ export function App() {
                 <Icon name="slides" />
                 Slides
               </button>
+              <button
+                className="button outline"
+                type="button"
+                aria-pressed={blocksOpen}
+                data-active={blocksOpen || undefined}
+                onClick={() => setBlocksOpen(!blocksOpen)}
+              >
+                Blocks
+              </button>
               <button className="button outline" type="button" onClick={resetSample}>
                 <Icon name="replace" />
                 Reset
@@ -402,7 +418,7 @@ export function App() {
                 </div>
               </nav>
             ) : null}
-            <div className="viewer-host">
+            <div className="viewer-host" ref={blockRootRef}>
               <ReactPptxViewer
                 ref={viewer.ref}
                 source={source}
@@ -428,6 +444,15 @@ export function App() {
                 height="100%"
               />
             </div>
+            {blocksOpen && parsed ? (
+              <BlockInspector
+                key={parsed.document.documentId ?? fileName}
+                model={parsed.document}
+                rootRef={blockRootRef}
+                controller={viewer.controller}
+                onClose={() => setBlocksOpen(false)}
+              />
+            ) : null}
           </div>
           <div className="drop-overlay">
             <div>

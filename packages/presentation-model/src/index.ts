@@ -614,6 +614,7 @@ export interface PresentationMetadata {
 }
 
 export interface PresentationDocument {
+  documentId?: string;
   format: PresentationFormat;
   size: PresentationSize;
   slides: PresentationSlide[];
@@ -666,3 +667,6 @@ export function collectSlideText(slide: PresentationSlide): string {
   visit(slide.nodes);
   return chunks.join('\n');
 }
+
+export type * from "./blocks";
+export { flattenPresentationBlocks } from "./blocks";

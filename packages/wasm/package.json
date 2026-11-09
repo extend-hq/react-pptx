@@ -24,7 +24,7 @@
     "README.md"
   ],
   "scripts": {
-    "build:wasm": "wasm-pack build ../.. --target web --out-name pptx_wasm --out-dir packages/wasm/pkg --release -- --locked",
+    "build:wasm": "node ../../scripts/build-wasm.mjs",
     "build": "pnpm build:wasm && tsup src/index.ts src/eager.ts --format esm --dts --sourcemap --clean --splitting false && cp pkg/pptx_wasm_bg.wasm dist/pptx_wasm_bg.wasm",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --root ../.. packages/wasm/src"

@@ -1,3 +1,4 @@
+import * as runtime from '../pkg/pptx_wasm.js';
 import type { WasmParseOptions } from './options';
 export type { WasmParseOptions } from './options';
 
@@ -33,4 +34,11 @@ export async function parsePresentation(bytes: Uint8Array, options?: WasmParseOp
 export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt' | 'pptx'> {
   await initWasm();
   return detect_presentation_format(bytes) as 'ppt' | 'pptx';
+}
+
+export async function extractPresentationBlocks(document: unknown, options?: { includeWords?: boolean; includeNotes?: boolean }): Promise<unknown> {
+  await initWasm();
+  const extract = (runtime as unknown as { extract_presentation_blocks?: (document: unknown, options?: unknown) => unknown }).extract_presentation_blocks;
+  if (!extract) throw new Error('This runtime does not support block extraction; build with the updated Rust parser.');
+  return extract(document, options);
 }
