@@ -1,5 +1,9 @@
 # @extend-ai/react-pptx
 
+## 0.4.1
+
+- Fix parsing with default options when Web Workers are unavailable, including server-side parsing. Pass the same explicit boolean defaults used by the worker path.
+
 ## 0.4.0
 
 - Bundle rust-pptx 0.2.0 and expose document-scoped object, paragraph, table-cell and UTF-16 word references.

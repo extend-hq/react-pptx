@@ -131,7 +131,7 @@ export async function parseWithWasm(
     const parse = runtime.parsePresentation ?? runtime.parse_presentation;
     if (!parse) return null;
     const result = await parse(bytes, {
-      include3dModels: options?.include3dModels,
+      include3dModels: options?.include3dModels ?? false,
     });
     const value = typeof result === 'string' ? (JSON.parse(result) as unknown) : result;
     return isPresentationDocument(value) ? value : null;

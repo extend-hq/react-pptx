@@ -1,4 +1,6 @@
 import type { PresentationDocument } from '@extend-ai/react-pptx-model';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const parsedDocument: PresentationDocument = {
@@ -59,6 +61,28 @@ describe('Wasm worker configuration', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it('parses without a worker when options are omitted', async () => {
+    vi.stubGlobal('Worker', undefined);
+    const { parseWithWasm, setWasmSource } = await import('./wasm');
+    const workspaceRoot = [process.cwd(), resolve(process.cwd(), '../..')].find((directory) =>
+      existsSync(resolve(directory, 'packages/wasm/pkg/pptx_wasm_bg.wasm')),
+    );
+    if (!workspaceRoot) throw new Error('Could not locate the workspace root.');
+    setWasmSource(
+      new Uint8Array(readFileSync(resolve(workspaceRoot, 'packages/wasm/pkg/pptx_wasm_bg.wasm'))),
+    );
+    const bytes = new Uint8Array(
+      readFileSync(resolve(workspaceRoot, 'tests/fixtures/generated/viewer-smoke.pptx')),
+    );
+
+    await expect(parseWithWasm(bytes)).resolves.toMatchObject({
+      format: 'pptx',
+      documentId: expect.stringMatching(/^pptx-v1:sha256:/),
+      slides: expect.arrayContaining([expect.objectContaining({ index: 0 })]),
+    });
+    expect(MockWorker.instances).toHaveLength(0);
   });
 
   it('forwards a configured Wasm URL to the parser worker', async () => {
