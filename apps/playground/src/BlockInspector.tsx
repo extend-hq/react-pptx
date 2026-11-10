@@ -11,6 +11,22 @@ import {
   type PptxViewerController,
   type PptxBlockGeometry,
 } from '@extend-ai/react-pptx';
+import { Download, ScanText, Search, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
+import { Label } from '@/components/ui/label';
+import { SegmentedControl, SegmentedControlItem } from '@/components/ui/segmented-control';
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Spinner } from '@/components/ui/spinner';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipPopup, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 type Row = { target: PresentationBlock | PresentationWord; type: string; depth: number };
 const colors: Record<string, string> = {
@@ -166,93 +182,142 @@ export function BlockInspector({
               : 'This source has no supported slide geometry.';
   return (
     <>
-      <aside className="blocks-panel" aria-label="Parsed blocks">
-        <header className="blocks-panel__header">
-          <strong>Blocks</strong>
-          <span aria-live="polite">
+      <aside
+        aria-label="Parsed blocks"
+        className="flex w-[340px] shrink-0 flex-col overflow-hidden rounded-lg border bg-background text-[13px] shadow-xs/5"
+      >
+        <header className="flex h-10 shrink-0 items-center gap-2 border-b ps-3 pe-1.5">
+          <ScanText className="size-4 text-brand" />
+          <strong className="font-semibold">Blocks</strong>
+          <span aria-live="polite" className="text-xs text-muted-foreground">
             {busy ? 'Loading…' : `${filtered.length} ${mode === 'words' ? 'words' : 'blocks'}`}
           </span>
-          <button className="button outline small" onClick={download} disabled={!output || busy}>
-            Download JSON
-          </button>
-          <button className="button outline small" onClick={onClose} aria-label="Close blocks">
-            ×
-          </button>
+          <span className="flex-1" />
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label="Download JSON"
+                  className="size-7 sm:size-7"
+                  disabled={!output || busy}
+                  onClick={download}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Download />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">Download JSON</TooltipPopup>
+          </Tooltip>
+          <Button
+            aria-label="Close blocks"
+            className="size-7 sm:size-7"
+            onClick={onClose}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <X />
+          </Button>
         </header>
-        <div className="blocks-panel__controls">
-          <div className="button-group" role="group" aria-label="Block view">
-            {(['text', 'words', 'json'] as const).map((value) => (
-              <button
-                className="button outline small"
-                key={value}
-                aria-pressed={mode === value}
-                data-active={mode === value || undefined}
-                onClick={() => {
-                  setMode(value);
-                  setHovered(undefined);
-                  if (value !== 'json') setSelected(undefined);
-                  setGeometry(undefined);
-                  if (value === 'words') setIncludeWords(true);
-                }}
-              >
-                {value === 'text' ? 'Text' : value === 'words' ? 'Words' : 'JSON'}
-              </button>
-            ))}
-          </div>
-          <label>
-            Type
-            <select
-              aria-label="Filter block type"
-              value={type}
-              onChange={(event) => {
-                setType(event.target.value);
+        <div className="flex shrink-0 flex-col gap-2 border-b p-3">
+          <div className="flex items-center gap-2">
+            <SegmentedControl aria-label="Block view" className="flex-1" size="sm">
+              {(['text', 'words', 'json'] as const).map((value) => (
+                <SegmentedControlItem
+                  aria-pressed={mode === value}
+                  className="flex-1 text-[13px] sm:text-[13px]"
+                  data-pressed={mode === value ? '' : undefined}
+                  key={value}
+                  onClick={() => {
+                    setMode(value);
+                    setHovered(undefined);
+                    if (value !== 'json') setSelected(undefined);
+                    setGeometry(undefined);
+                    if (value === 'words') setIncludeWords(true);
+                  }}
+                >
+                  {value === 'text' ? 'Text' : value === 'words' ? 'Words' : 'JSON'}
+                </SegmentedControlItem>
+              ))}
+            </SegmentedControl>
+            <Select
+              items={[
+                { label: 'All types', value: 'all' },
+                ...types.map((value) => ({ label: value.replaceAll('_', ' '), value })),
+              ]}
+              onValueChange={(value) => {
+                setType(value ?? 'all');
                 setHovered(undefined);
                 setSelected(undefined);
               }}
+              value={type}
             >
-              <option value="all">All types</option>
-              {types.map((value) => (
-                <option key={value} value={value}>
-                  {value.replaceAll('_', ' ')}
-                </option>
-              ))}
-            </select>
-          </label>
-          <input
-            aria-label="Search blocks"
-            placeholder="Filter block text"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <label className="blocks-panel__check">
-            <input
-              type="checkbox"
+              <SelectTrigger
+                aria-label="Filter block type"
+                className="w-32 min-w-0 text-[13px] capitalize sm:text-[13px]"
+                size="sm"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="all">All types</SelectItem>
+                {types.map((value) => (
+                  <SelectItem className="capitalize" key={value} value={value}>
+                    {value.replaceAll('_', ' ')}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          </div>
+          <InputGroup className="rounded-md before:rounded-[calc(var(--radius-md)-1px)]">
+            <InputGroupAddon>
+              <Search className="size-3.5!" />
+            </InputGroupAddon>
+            <InputGroupInput
+              aria-label="Search blocks"
+              className="text-[13px] sm:text-[13px]"
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Filter block text"
+              size="sm"
+              value={query}
+            />
+          </InputGroup>
+          <Label className="cursor-pointer gap-2 text-[13px] font-normal">
+            <Switch
               checked={showAll}
-              onChange={(event) => setShowAll(event.target.checked)}
+              className="data-checked:bg-brand"
+              onCheckedChange={setShowAll}
             />
             Show all highlights
-          </label>
+          </Label>
         </div>
         {error ? (
-          <p role="alert" className="blocks-panel__message">
+          <p className="border-b px-3 py-2 text-xs text-destructive-foreground" role="alert">
             {error}
           </p>
         ) : null}
         <div
-          className="blocks-panel__list"
+          className="min-h-0 flex-1 overflow-auto"
           ref={scrollRef}
           onMouseLeave={() => setHovered(undefined)}
         >
           {busy ? (
-            <p className="blocks-panel__message">Extracting blocks…</p>
+            <p className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
+              <Spinner className="size-3.5" />
+              Extracting blocks…
+            </p>
           ) : mode === 'json' ? (
-            <pre>{JSON.stringify(active ? { ...active, geometry } : output, null, 2)}</pre>
+            <pre className="m-0 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all">
+              {JSON.stringify(active ? { ...active, geometry } : output, null, 2)}
+            </pre>
           ) : filtered.length ? (
             <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
               {virtualizer.getVirtualItems().map((item) => {
                 const row = filtered[item.index]!,
                   target = row.target,
                   source = target.sourceRefs[0];
+                const isActive = active?.id === target.id;
                 return (
                   <button
                     key={item.key}
@@ -261,11 +326,14 @@ export function BlockInspector({
                     data-index={item.index}
                     data-block-output-id={target.id}
                     data-block-output-type={row.type}
-                    data-active={active?.id === target.id || undefined}
-                    className="block-card"
+                    data-active={isActive || undefined}
+                    className={cn(
+                      'absolute inset-x-0 top-0 flex w-full flex-col gap-1 border-b border-s-2 border-s-transparent py-2.5 pe-3 text-left outline-none transition-colors hover:bg-accent focus-visible:bg-accent',
+                      isActive && 'border-s-brand bg-brand/6 hover:bg-brand/8',
+                    )}
                     style={{
                       transform: `translateY(${item.start}px)`,
-                      paddingLeft: 14 + Math.min(row.depth, 4) * 12,
+                      paddingLeft: 12 + Math.min(row.depth, 4) * 12,
                     }}
                     onMouseEnter={() => {
                       setHovered(target.id);
@@ -278,30 +346,41 @@ export function BlockInspector({
                     onBlur={() => setHovered(undefined)}
                     onClick={() => void select(target)}
                   >
-                    <span className="block-card__meta">
-                      <span style={{ color: colors[row.type] }}>
+                    <span className="flex items-center gap-1.5 text-[11px]">
+                      <span
+                        className="size-2 rounded-full"
+                        style={{ backgroundColor: colors[row.type] ?? '#2563eb' }}
+                      />
+                      <span className="font-medium capitalize" style={{ color: colors[row.type] }}>
                         {row.type.replaceAll('_', ' ')}
                       </span>
-                      <span>
+                      <span className="ms-auto text-muted-foreground">
                         {source?.story === 'notes' ? 'Notes · ' : ''}Slide{' '}
                         {(source?.slideIndex ?? 0) + 1}
                       </span>
                     </span>
-                    <span className="block-card__content">
+                    <span className="line-clamp-3 text-[13px] leading-snug break-words">
                       {target.content ||
-                        (target.object === 'block'
-                          ? String(target.details.kind ?? target.type).replaceAll('_', ' ')
-                          : 'Empty word')}
+                        (target.object === 'block' ? (
+                          <span className="text-muted-foreground capitalize">
+                            {String(target.details.kind ?? target.type).replaceAll('_', ' ')}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Empty word</span>
+                        ))}
                     </span>
                   </button>
                 );
               })}
             </div>
           ) : (
-            <p className="blocks-panel__message">No matching blocks.</p>
+            <p className="p-3 text-xs text-muted-foreground">No matching blocks.</p>
           )}
         </div>
-        <footer className="blocks-panel__message" aria-live="polite">
+        <footer
+          aria-live="polite"
+          className="shrink-0 border-t bg-chrome/60 px-3 py-2 text-[11px] text-muted-foreground"
+        >
           {status ?? 'Hover to highlight. Click to reveal on the slide.'}
         </footer>
       </aside>

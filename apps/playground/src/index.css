@@ -1,0 +1,335 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --radius-sm: calc(var(--radius) * 0.6);
+    --radius-md: calc(var(--radius) * 0.8);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) * 1.4);
+    --radius-2xl: calc(var(--radius) * 1.8);
+    --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Inter Variable", sans-serif;
+    --color-brand: var(--brand);
+    --color-brand-foreground: var(--brand-foreground);
+    --color-chrome: var(--chrome);
+    --color-canvas: var(--canvas);
+    --animate-skeleton: skeleton 2s -1s infinite linear;
+    --animate-caret-blink: 1s ease-out infinite caret-blink;
+    --animate-toast-success-odd: toast-success-odd 0.32s cubic-bezier(0.5, 1, 0.89, 1);
+    --animate-toast-success-even: toast-success-even 0.32s cubic-bezier(0.5, 1, 0.89, 1);
+    --animate-toast-error-odd: toast-error-odd 0.28s cubic-bezier(0.5, 1, 0.89, 1);
+    --animate-toast-error-even: toast-error-even 0.28s cubic-bezier(0.5, 1, 0.89, 1);
+    --color-warning-foreground: var(--warning-foreground);
+    --color-warning: var(--warning);
+    --color-success-foreground: var(--success-foreground);
+    --color-success: var(--success);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-ring: var(--ring);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary: var(--primary);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-input: var(--input);
+    --color-info-foreground: var(--info-foreground);
+    --color-info: var(--info);
+    --color-foreground: var(--foreground);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-destructive: var(--destructive);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-border: var(--border);
+    --color-background: var(--background);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+  @keyframes skeleton {
+  to {
+    background-position: -200% 0;
+        }
+    }
+  @keyframes caret-blink {
+  0%, 70%, to {
+    opacity: 1;
+        }
+  20%, 50% {
+    opacity: 0;
+        }
+    }
+  @keyframes toast-success-odd {
+  0% {
+    scale: 1;
+        }
+  30% {
+    scale: 1.025;
+        }
+  60% {
+    scale: 0.99;
+        }
+  100% {
+    scale: 1;
+        }
+    }
+  @keyframes toast-error-odd {
+  0% {
+    translate: 0 0;
+        }
+  25% {
+    translate: -3px 0;
+        }
+  50% {
+    translate: 3px 0;
+        }
+  75% {
+    translate: -3px 0;
+        }
+  100% {
+    translate: 0 0;
+        }
+    }
+  @keyframes toast-success-even {
+  0% {
+    scale: 1;
+        }
+  30% {
+    scale: 1.025;
+        }
+  60% {
+    scale: 0.99;
+        }
+  100% {
+    scale: 1;
+        }
+    }
+  @keyframes toast-error-even {
+  0% {
+    translate: 0 0;
+        }
+  25% {
+    translate: -3px 0;
+        }
+  50% {
+    translate: 3px 0;
+        }
+  75% {
+    translate: -3px 0;
+        }
+  100% {
+    translate: 0 0;
+        }
+    }
+}
+
+:root {
+    --radius: 0.5rem;
+    --brand: #c43e1c;
+    --brand-foreground: #ffffff;
+    --chrome: #f3f3f3;
+    --canvas: #e8e8e8;
+    --accent: --alpha(var(--color-black) / 4%);
+    --accent-foreground: var(--color-neutral-800);
+    --background: var(--color-white);
+    --border: --alpha(var(--color-black) / 8%);
+    --card: var(--color-white);
+    --card-foreground: var(--color-neutral-800);
+    --destructive: var(--color-red-500);
+    --destructive-foreground: var(--color-red-700);
+    --foreground: var(--color-neutral-800);
+    --info: var(--color-blue-500);
+    --info-foreground: var(--color-blue-700);
+    --input: --alpha(var(--color-black) / 10%);
+    --muted: --alpha(var(--color-black) / 4%);
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-black));
+    --popover: var(--color-white);
+    --popover-foreground: var(--color-neutral-800);
+    --primary: var(--color-neutral-800);
+    --primary-foreground: var(--color-neutral-50);
+    --ring: var(--color-neutral-400);
+    --secondary: --alpha(var(--color-black) / 4%);
+    --secondary-foreground: var(--color-neutral-800);
+    --success: var(--color-emerald-500);
+    --success-foreground: var(--color-emerald-700);
+    --warning: var(--color-amber-500);
+    --warning-foreground: var(--color-amber-700);
+}
+
+.dark {
+    --brand: #f0805f;
+    --brand-foreground: #2a0d05;
+    --chrome: var(--color-neutral-950);
+    --canvas: color-mix(in srgb, var(--color-neutral-950) 70%, var(--color-neutral-800));
+    --accent: --alpha(var(--color-white) / 4%);
+    --accent-foreground: var(--color-neutral-100);
+    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+    --border: --alpha(var(--color-white) / 6%);
+    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --card-foreground: var(--color-neutral-100);
+    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+    --destructive-foreground: var(--color-red-400);
+    --foreground: var(--color-neutral-100);
+    --info: var(--color-blue-500);
+    --info-foreground: var(--color-blue-400);
+    --input: --alpha(var(--color-white) / 8%);
+    --muted: --alpha(var(--color-white) / 4%);
+    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+    --popover-foreground: var(--color-neutral-100);
+    --primary: var(--color-neutral-100);
+    --primary-foreground: var(--color-neutral-800);
+    --ring: var(--color-neutral-500);
+    --secondary: --alpha(var(--color-white) / 4%);
+    --secondary-foreground: var(--color-neutral-100);
+    --success: var(--color-emerald-500);
+    --success-foreground: var(--color-emerald-400);
+    --warning: var(--color-amber-500);
+    --warning-foreground: var(--color-amber-400);
+}
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+  }
+
+  body {
+    @apply bg-chrome font-sans text-foreground antialiased;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                 react-pptx viewer chrome, PowerPoint-style                 */
+/* -------------------------------------------------------------------------- */
+
+.slide-canvas .rpv-root {
+  --rpv-ink: var(--foreground);
+  --rpv-paper: var(--background);
+  --rpv-panel: var(--canvas);
+  --rpv-rule: var(--border);
+  --rpv-accent: var(--brand);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  color: var(--foreground);
+  background: transparent;
+  border: 0;
+  font-family: var(--font-sans);
+}
+
+.slide-canvas .rpv-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+
+.slide-canvas .rpv-stage,
+.slide-canvas .rpv-status {
+  background: var(--canvas);
+}
+
+.slide-canvas .rpv-status {
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.slide-canvas .rpv-spinner {
+  border-color: color-mix(in srgb, var(--foreground) 20%, transparent);
+  border-top-color: var(--brand);
+}
+
+.slide-canvas .rpv-viewport {
+  padding: 32px;
+}
+
+/* Normal view: centre the current slide on the canvas, as PowerPoint does. */
+.slide-canvas[data-mode='slide'] .rpv-viewport {
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-canvas[data-mode='slide'] .rpv-viewport > * {
+  margin-block: auto !important;
+}
+
+.slide-canvas .rpv-viewport .rpv-normalized-slide {
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 6%),
+    0 2px 6px rgb(0 0 0 / 10%);
+}
+
+.dark .slide-canvas .rpv-viewport .rpv-normalized-slide {
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 6%),
+    0 2px 10px rgb(0 0 0 / 50%);
+}
+
+.slide-canvas .rpv-slide-label {
+  right: 12px;
+  bottom: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--foreground) 80%, transparent);
+  color: var(--background);
+}
+
+/* Diagnostics: a right-hand task pane in the same language as the block inspector. */
+.slide-canvas .rpv-diagnostics {
+  width: 280px;
+  flex: 0 0 280px;
+  padding: 14px 16px;
+  font-size: 13px;
+  background: var(--background);
+  border-left: 1px solid var(--border);
+}
+
+.slide-canvas .rpv-diagnostics h2,
+.slide-canvas .rpv-notes h2 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.slide-canvas .rpv-diagnostics dl div,
+.slide-canvas .rpv-diagnostics p {
+  border-color: var(--border);
+}
+
+.slide-canvas .rpv-diagnostics dt {
+  color: var(--muted-foreground);
+}
+
+.slide-canvas .rpv-diagnostics p strong {
+  margin-bottom: 2px;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* Speaker notes sit under the slide, like PowerPoint's Notes pane. */
+.slide-canvas .rpv-notes {
+  flex: 0 0 auto;
+  max-height: 140px;
+  overflow: auto;
+  padding: 10px 16px 12px;
+  font-size: 13px;
+  background: var(--background);
+  border-top: 1px solid var(--border);
+}
+
+.slide-canvas .rpv-notes p {
+  margin: 0 0 4px;
+}
+
+/* Thumbnails drawn by usePptxViewerThumbnails into the slide rail. */
+.slide-thumb-preview > * {
+  display: block;
+}
