@@ -41,6 +41,8 @@ pnpm test:visual --project=chromium
 
 `pnpm dev` rebuilds WASM, the model and the viewer before starting the playground at [localhost:4173](http://localhost:4173). Restart it after changing the Rust dependency.
 
+The [playground](https://react-pptx-alpha.vercel.app/) opens PPTX files in edit mode. Select a slide object to edit text or table cells, drag to move it, or use the corner handles and position fields to resize it. Undo/redo and Download preserve edits in the original PPTX package. The **Read only** switch disables editing; legacy PPT files and inherited layout/master objects remain read only. This editor is implemented in the playground; the published viewer API remains a viewer. The default presentation is a licensed excerpt with [source and adaptation credits](apps/playground/public/samples/ATTRIBUTION.txt).
+
 | Work | Start here |
 | --- | --- |
 | Public viewer, controller and hooks | [packages/react-viewer](packages/react-viewer) |

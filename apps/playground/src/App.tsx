@@ -31,6 +31,8 @@ import {
   Presentation,
   RectangleHorizontal,
   RotateCcw,
+  Undo2,
+  Redo2,
   Scan,
   ScanText,
   Search,
@@ -40,6 +42,8 @@ import {
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { BlockInspector } from '@/BlockInspector';
+import { ObjectEditor } from '@/ObjectEditor';
+import { usePptxEditing } from '@/lib/use-pptx-editing';
 import {
   RibbonButton,
   RibbonDivider,
@@ -68,8 +72,13 @@ import { cn } from '@/lib/utils';
 setWasmSource(wasmUrl);
 
 const SAMPLES = [
-  { file: 'viewer-smoke.pptx', label: 'Viewer smoke test' },
-  { file: 'charts-showcase.pptx', label: 'Charts showcase' },
+  {
+    file: 'generative-ai.pptx',
+    label: 'Introduction to Generative AI',
+    source: '/samples/generative-ai.pptx',
+  },
+  { file: 'viewer-smoke.pptx', label: 'Viewer smoke test', source: '/viewer-smoke.pptx' },
+  { file: 'charts-showcase.pptx', label: 'Charts showcase', source: '/charts-showcase.pptx' },
 ] as const;
 const DEFAULT_SAMPLE = SAMPLES[0];
 const ZOOM_PRESETS = [50, 75, 100, 125, 150, 200, 300] as const;
@@ -143,6 +152,15 @@ type Playground = {
   loadSample: (file: string) => void;
   resetSample: () => void;
   downloadOriginal: () => void;
+  readOnly: boolean;
+  setReadOnly: (value: boolean) => void;
+  legacy: boolean;
+  editingBusy: boolean;
+  editingReady: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
+  undo: () => void;
+  redo: () => void;
   startSlideShow: (fromBeginning: boolean) => void;
 };
 
@@ -159,7 +177,15 @@ function usePlayground() {
 /* -------------------------------------------------------------------------- */
 
 function TitleBar() {
-  const { downloadOriginal, fileName, openFilePicker, parsed } = usePlayground();
+  const {
+    downloadOriginal,
+    fileName,
+    openFilePicker,
+    parsed,
+    readOnly,
+    editingBusy,
+    editingReady,
+  } = usePlayground();
   const { resolvedTheme, setTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const titleButton = 'h-7 text-[13px] font-normal sm:h-7';
@@ -171,9 +197,11 @@ function TitleBar() {
           <Presentation className="size-4" />
         </div>
         <span className="truncate text-[13px] font-semibold">{fileName}</span>
-        <Badge className="rounded px-1.5 text-[10px]" variant="outline">
-          Read-only
-        </Badge>
+        {readOnly && (
+          <Badge className="rounded px-1.5 text-[10px]" variant="outline">
+            Read-only
+          </Badge>
+        )}
         <span className="hidden truncate text-xs text-muted-foreground md:inline">
           React PPTX Playground
         </span>
@@ -186,7 +214,7 @@ function TitleBar() {
         </Button>
         <Button
           className={titleButton}
-          disabled={!parsed}
+          disabled={!parsed || editingBusy || !editingReady}
           onClick={downloadOriginal}
           size="sm"
           variant="ghost"
@@ -248,6 +276,7 @@ function SlideNavigation() {
 }
 
 function HomeRibbon() {
+  const p = usePlayground();
   const {
     activeResult,
     blocksOpen,
@@ -271,6 +300,20 @@ function HomeRibbon() {
         <SlideNavigation />
       </RibbonGroup>
       <RibbonGroup label="Editing">
+        <RibbonButton
+          label="Undo"
+          disabled={p.readOnly || p.editingBusy || !p.canUndo}
+          onClick={p.undo}
+        >
+          <Undo2 />
+        </RibbonButton>
+        <RibbonButton
+          label="Redo"
+          disabled={p.readOnly || p.editingBusy || !p.canRedo}
+          onClick={p.redo}
+        >
+          <Redo2 />
+        </RibbonButton>
         <InputGroup className="h-7 w-60 rounded-md text-[13px] before:rounded-[calc(var(--radius-md)-1px)] sm:text-[13px]">
           <InputGroupAddon>
             <Search className="size-3.5!" />
@@ -356,7 +399,15 @@ function InsertRibbon() {
         </Menu>
       </RibbonGroup>
       <span className="px-2 text-xs text-muted-foreground">
-        Or drop a .ppt or .pptx file anywhere. Files are parsed locally in your browser.
+        Or drop a .ppt or .pptx file anywhere. Files are parsed locally in your browser.{' '}
+        <a
+          className="underline underline-offset-2"
+          href="/samples/ATTRIBUTION.txt"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Sample credits
+        </a>
       </span>
     </>
   );
@@ -634,6 +685,7 @@ function DeveloperRibbon() {
 }
 
 function Ribbon() {
+  const { readOnly, setReadOnly, legacy } = usePlayground();
   const [tab, setTab] = React.useState<RibbonTab>('Home');
   const panelClass = 'flex items-center';
 
@@ -643,20 +695,32 @@ function Ribbon() {
       onValueChange={(value) => setTab(value as RibbonTab)}
       value={tab}
     >
-      <TabsList
-        className="h-8 gap-0.5 p-0 *:data-[slot=tab-indicator]:bg-brand *:data-[slot=tabs-tab]:hover:bg-black/5 dark:*:data-[slot=tabs-tab]:hover:bg-white/5"
-        variant="underline"
-      >
-        {RIBBON_TABS.map((name) => (
-          <TabsTab
-            className="h-7 grow-0 rounded-sm px-2.5 text-[13px] font-normal text-foreground/75 hover:text-foreground data-active:font-semibold data-active:text-brand"
-            key={name}
-            value={name}
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="min-w-0 overflow-x-auto [scrollbar-width:none]">
+          <TabsList
+            className="h-8 gap-0.5 p-0 *:data-[slot=tab-indicator]:bg-brand *:data-[slot=tabs-tab]:hover:bg-black/5 dark:*:data-[slot=tabs-tab]:hover:bg-white/5"
+            variant="underline"
           >
-            {name}
-          </TabsTab>
-        ))}
-      </TabsList>
+            {RIBBON_TABS.map((name) => (
+              <TabsTab
+                className="h-7 grow-0 rounded-sm px-2.5 text-[13px] font-normal text-foreground/75 hover:text-foreground data-active:font-semibold data-active:text-brand"
+                key={name}
+                value={name}
+              >
+                {name}
+              </TabsTab>
+            ))}
+          </TabsList>
+        </div>
+        <div className="ms-auto flex shrink-0 items-center">
+          <RibbonToggle
+            checked={readOnly}
+            disabled={legacy}
+            label="Read only"
+            onCheckedChange={setReadOnly}
+          />
+        </div>
+      </div>
       <div className="mt-1 flex h-11 items-center overflow-x-auto rounded-lg border bg-background px-2 shadow-xs/5 [scrollbar-width:none]">
         <TabsPanel className={panelClass} value="Home">
           <HomeRibbon />
@@ -941,9 +1005,9 @@ export function App() {
   );
   const [opened, setOpened] = React.useState<OpenedFile>({
     name: DEFAULT_SAMPLE.file,
-    source: `/${DEFAULT_SAMPLE.file}`,
+    source: DEFAULT_SAMPLE.source,
   });
-  const [source, setSource] = React.useState<PresentationSource>(`/${DEFAULT_SAMPLE.file}`);
+  const [source, setSource] = React.useState<PresentationSource>(DEFAULT_SAMPLE.source);
   const [mode, setMode] = React.useState<ViewerMode>('slide');
   const [zoom, setZoom] = React.useState<ViewerZoomLevel>('fit-page');
   const [resolvedZoom, setResolvedZoom] = React.useState(100);
@@ -960,6 +1024,9 @@ export function App() {
   const [presenting, setPresenting] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
   const [parsed, setParsed] = React.useState<ParsedPresentation | null>(null);
+  const [readOnly, setReadOnly] = React.useState(false);
+  const editing = usePptxEditing(opened, setSource);
+  const legacy = parsed?.document.format === 'ppt';
 
   const open = React.useCallback((next: OpenedFile, cacheBust = false) => {
     setParsed(null);
@@ -1032,11 +1099,23 @@ export function App() {
   React.useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
+        event.defaultPrevented ||
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
         (event.target instanceof HTMLElement && event.target.isContentEditable)
       )
         return;
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        ['z', 'y'].includes(event.key.toLowerCase()) &&
+        !readOnly &&
+        !legacy &&
+        !presenting
+      ) {
+        event.preventDefault();
+        void editing.update(event.key.toLowerCase() === 'y' || event.shiftKey ? 'redo' : 'undo');
+        return;
+      }
       if (event.key === 'F5') {
         event.preventDefault();
         startSlideShow(!event.shiftKey);
@@ -1052,7 +1131,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [presenting, startSlideShow, viewer.controller]);
+  }, [presenting, startSlideShow, viewer.controller, readOnly, legacy, editing.update]);
 
   const playground: Playground = {
     controller: viewer.controller,
@@ -1084,16 +1163,26 @@ export function App() {
     slideLabels,
     setSlideLabels,
     openFilePicker: () => inputRef.current?.click(),
-    loadSample: (file) => open({ name: file, source: `/${file}` }, true),
-    resetSample: () => open({ name: DEFAULT_SAMPLE.file, source: `/${DEFAULT_SAMPLE.file}` }, true),
+    loadSample: (file) => {
+      const sample = SAMPLES.find((candidate) => candidate.file === file);
+      if (sample) open({ name: sample.file, source: sample.source }, true);
+    },
+    resetSample: () => open({ name: DEFAULT_SAMPLE.file, source: DEFAULT_SAMPLE.source }, true),
     downloadOriginal: () => {
-      const href =
-        typeof opened.source === 'string' ? opened.source : URL.createObjectURL(opened.source);
-      const link = document.createElement('a');
-      link.href = href;
-      link.download = opened.name;
-      link.click();
-      if (href !== opened.source) setTimeout(() => URL.revokeObjectURL(href), 1000);
+      editing.download(opened.name);
+    },
+    readOnly: readOnly || legacy,
+    setReadOnly,
+    legacy,
+    editingBusy: editing.busy,
+    editingReady: editing.ready,
+    canUndo: editing.canUndo,
+    canRedo: editing.canRedo,
+    undo: () => {
+      void editing.update('undo');
+    },
+    redo: () => {
+      void editing.update('redo');
     },
     startSlideShow,
   };
@@ -1144,6 +1233,21 @@ export function App() {
         <TitleBar />
         <Ribbon />
 
+        {editing.error && (
+          <div role="alert" className="px-3 pb-2 text-sm text-destructive-foreground">
+            {editing.error}
+          </div>
+        )}
+        {!readOnly && (
+          <div className="px-3 pb-2 text-xs text-muted-foreground" role="status">
+            {legacy
+              ? 'Legacy PPT files are read only. Open a PPTX file to edit.'
+              : editing.busy
+                ? 'Applying changes…'
+                : 'Select an object to edit its text. Drag to move, or use the corner handles to resize. Download saves your changes.'}
+          </div>
+        )}
+
         <main className="flex min-h-0 flex-1 gap-2 px-2" id="viewer-workspace">
           {thumbnailsOpen ? <SlideRail /> : null}
           <div
@@ -1180,6 +1284,18 @@ export function App() {
               />
             </div>
           </div>
+          <ObjectEditor
+            key={
+              opened.name +
+              String(typeof opened.source === 'string' ? opened.source : opened.source.lastModified)
+            }
+            rootRef={blockRootRef}
+            parsed={parsed}
+            disabled={readOnly || legacy || presenting || !editing.ready}
+            busy={editing.busy}
+            revision={editing.revision}
+            onEdit={editing.update}
+          />
           {blocksOpen && parsed ? (
             <BlockInspector
               key={parsed.document.documentId ?? opened.name}
