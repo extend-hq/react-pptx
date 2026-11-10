@@ -1055,10 +1055,95 @@ export class NormalizedPresentationViewer {
 
   constructor(
     private readonly container: HTMLElement,
-    readonly presentation: PresentationDocument,
+    public presentation: PresentationDocument,
     private readonly callbacks: NormalizedViewerCallbacks = {},
   ) {
     this.assetCache = acquirePresentationAssetCache(presentation);
+  }
+
+  updatePresentation(next: PresentationDocument): boolean {
+    if (this.destroyed) return false;
+    const previous = this.presentation;
+    const equal = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    if (
+      previous.format !== next.format ||
+      !equal(previous.size, next.size) ||
+      !equal(previous.embeddedFonts, next.embeddedFonts) ||
+      !equal(previous.themes, next.themes) ||
+      !equal(previous.masters, next.masters) ||
+      !equal(previous.layouts, next.layouts) ||
+      previous.slides.length !== next.slides.length
+    )
+      return false;
+    const assetIds = Object.keys(previous.assets);
+    if (assetIds.length !== Object.keys(next.assets).length) return false;
+    for (const id of assetIds) {
+      const a = previous.assets[id]!;
+      const b = next.assets[id];
+      if (
+        !b ||
+        a.contentType !== b.contentType ||
+        a.url !== b.url ||
+        a.byteLength !== b.byteLength ||
+        Boolean(a.data) !== Boolean(b.data) ||
+        a.data?.length !== b.data?.length
+      )
+        return false;
+      if (a.data && b.data && a.data !== b.data) {
+        for (let index = 0; index < a.data.length; index++) {
+          if (a.data[index] !== b.data[index]) return false;
+        }
+      }
+    }
+    const changes = new Map<number, number[]>();
+    for (const [index, slide] of next.slides.entries()) {
+      const old = previous.slides[index]!;
+      const { nodes: oldNodes, ...oldProperties } = old;
+      const { nodes, ...properties } = slide;
+      if (!equal(oldProperties, properties) || oldNodes.length !== nodes.length) return false;
+      const changed: number[] = [];
+      for (const [nodeIndex, node] of nodes.entries()) {
+        if (node.id !== oldNodes[nodeIndex]?.id || node.type !== oldNodes[nodeIndex]?.type)
+          return false;
+        if (!equal(node, oldNodes[nodeIndex])) changed.push(nodeIndex);
+      }
+      if (changed.length) changes.set(index, changed);
+    }
+    this.presentation = next;
+    for (const handle of this.mountedHandles) {
+      const slideIndex = Number(handle.element.dataset.rpvSlideIndex);
+      const changed = changes.get(slideIndex);
+      if (!changed) continue;
+      this.renderingSlideIndex = slideIndex;
+      for (const index of changed) {
+        const old = handle.element.querySelector<HTMLElement>(`[data-rpv-node-path="${index}"]`);
+        if (!old || old.querySelector('[contenteditable="true"]')) continue;
+        const node = next.slides[slideIndex]!.nodes[index]!;
+        try {
+          const focused = old === document.activeElement;
+          const replacement = this.createNode(
+            node,
+            {
+              x: 0,
+              y: 0,
+              width: next.size.widthEmu,
+              height: next.size.heightEmu,
+            },
+            String(index),
+          );
+          old.replaceWith(replacement);
+          if (focused) {
+            replacement.tabIndex = -1;
+            replacement.focus({ preventScroll: true });
+          }
+        } catch (error) {
+          this.callbacks.onNodeError?.(node.id, error);
+        }
+      }
+      this.renderingSlideIndex = undefined;
+      this.callbacks.onSlideRendered?.(slideIndex, handle.element);
+    }
+    return true;
   }
 
   get slideCount(): number {

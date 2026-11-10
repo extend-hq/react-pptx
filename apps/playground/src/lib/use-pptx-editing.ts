@@ -4,12 +4,12 @@ import { editPptx, type ObjectEdit } from './pptx-editing';
 
 export function usePptxEditing(
   opened: { source: string | File },
-  onChange: (parsed: ParsedPresentation) => void,
+  onChange: (parsed: ParsedPresentation) => void | Promise<void>,
 ) {
   const bytes = React.useRef<Uint8Array | null>(null);
   const history = React.useRef<{ undo: Uint8Array[]; redo: Uint8Array[] }>({ undo: [], redo: [] });
   const generation = React.useRef(0);
-  const working = React.useRef(false);
+  const queue = React.useRef<Promise<void>>(Promise.resolve());
   const [ready, setReady] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -20,7 +20,6 @@ export function usePptxEditing(
     const abort = new AbortController();
     bytes.current = null;
     history.current = { undo: [], redo: [] };
-    working.current = false;
     setReady(false);
     setBusy(false);
     setError(null);
@@ -48,12 +47,11 @@ export function usePptxEditing(
     };
   }, [opened]);
 
-  const update = React.useCallback(
+  const applyUpdate = React.useCallback(
     async (edit: ObjectEdit | 'undo' | 'redo') => {
       const previous = bytes.current;
-      if (!previous || working.current) return;
+      if (!previous) return;
       const current = generation.current;
-      working.current = true;
       setBusy(true);
       setError(null);
       try {
@@ -79,18 +77,29 @@ export function usePptxEditing(
         }
         bytes.current = next;
         setRevision((value) => value + 1);
-        onChange(parsed);
+        await onChange(parsed);
       } catch (cause) {
         if (current === generation.current)
           setError(cause instanceof Error ? cause.message : 'The change could not be saved.');
       } finally {
         if (current === generation.current) {
-          working.current = false;
           setBusy(false);
         }
       }
     },
     [onChange],
+  );
+
+  const update = React.useCallback(
+    (edit: ObjectEdit | 'undo' | 'redo') => {
+      const current = generation.current;
+      const pending = queue.current.then(async () => {
+        if (current === generation.current) await applyUpdate(edit);
+      });
+      queue.current = pending.catch(() => {});
+      return pending;
+    },
+    [applyUpdate],
   );
 
   return {
@@ -101,8 +110,9 @@ export function usePptxEditing(
     canUndo: history.current.undo.length > 0,
     canRedo: history.current.redo.length > 0,
     update,
-    download: (name: string) => {
-      if (!bytes.current || working.current) return;
+    download: async (name: string) => {
+      await queue.current;
+      if (!bytes.current) return;
       const href = URL.createObjectURL(
         new Blob([new Uint8Array(bytes.current)], {
           type: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',

@@ -7,6 +7,7 @@ const PRESENTATION = 'http://schemas.openxmlformats.org/presentationml/2006/main
 export type ObjectEdit = {
   node: SlideNode;
   bounds?: Rect;
+  text?: { paragraphs: { text: string; sourceIndex?: number }[]; row?: number; column?: number };
   paragraph?: { index: number; text: string; row?: number; column?: number };
 };
 
@@ -176,22 +177,36 @@ export async function editPptx(bytes: Uint8Array, edit: ObjectEdit): Promise<Uin
     }
   }
   if (locks?.noSelection) throw new Error('This object is locked.');
-  if (edit.paragraph) {
+  if (edit.paragraph || edit.text) {
+    const textEdit = edit.paragraph ?? edit.text!;
     if (locks?.noTextEdit) throw new Error('Text editing is locked for this object.');
     let body = child(object, PRESENTATION, 'txBody');
-    if (
-      node.type === 'table' &&
-      edit.paragraph.row !== undefined &&
-      edit.paragraph.column !== undefined
-    ) {
+    if (node.type === 'table' && textEdit.row !== undefined && textEdit.column !== undefined) {
       const table = object.getElementsByTagNameNS(DRAWING, 'tbl')[0];
-      const row = table && children(table, DRAWING, 'tr')[edit.paragraph.row];
-      const cell = row && children(row, DRAWING, 'tc')[edit.paragraph.column];
+      const row = table && children(table, DRAWING, 'tr')[textEdit.row];
+      const cell = row && children(row, DRAWING, 'tc')[textEdit.column];
       body = cell && child(cell, DRAWING, 'txBody');
     }
-    const paragraph = body && children(body, DRAWING, 'p')[edit.paragraph.index];
-    if (!paragraph) throw new Error('This text cannot be edited.');
-    replaceParagraphText(paragraph, edit.paragraph.text.replace(/\r\n?/g, '\n'));
+    if (!body) throw new Error('This text cannot be edited.');
+    const paragraphs = children(body, DRAWING, 'p');
+    if (edit.text) {
+      const replacements = (
+        edit.text.paragraphs.length ? edit.text.paragraphs : [{ text: '' }]
+      ).map(({ text, sourceIndex }, index) => {
+        const original = paragraphs[sourceIndex ?? index] ?? paragraphs.at(-1);
+        const paragraph = original
+          ? (original.cloneNode(true) as Element)
+          : drawingElement(body!, 'p');
+        replaceParagraphText(paragraph, text.replace(/\r\n?/g, '\n'));
+        return paragraph;
+      });
+      for (const paragraph of paragraphs) paragraph.remove();
+      body.append(...replacements);
+    } else if (edit.paragraph) {
+      const paragraph = paragraphs[edit.paragraph.index];
+      if (!paragraph) throw new Error('This text cannot be edited.');
+      replaceParagraphText(paragraph, edit.paragraph.text.replace(/\r\n?/g, '\n'));
+    }
   }
   if (edit.bounds) {
     const b = edit.bounds;

@@ -28,6 +28,7 @@ import type {
 import { normalizeViewerZoomLevel } from './zoom';
 
 interface ViewerAdapter {
+  updatePresentation(parsed: ParsedPresentation): boolean;
   render(mode: ViewerMode, slideIndex: number): Promise<void>;
   goToSlide(index: number, options?: ScrollIntoViewOptions): Promise<void>;
   setZoom(level: ViewerZoomLevel): Promise<void>;
@@ -165,6 +166,7 @@ async function createAdapter(
 
   const normalized = new NormalizedPresentationViewer(target, parsed.document, callbacks);
   return {
+    updatePresentation: (next) => normalized.updatePresentation(next.document),
     async render(mode, slideIndex) {
       const startedAt = performanceNow();
       if (mode === 'continuous') {
@@ -307,10 +309,14 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
     const filmstripRef = useRef<HTMLElement>(null);
     const adapterRef = useRef<ViewerAdapter | undefined>(undefined);
     const adapterGenerationRef = useRef(0);
+    const preservedScrollRef = useRef<{ top: number; left: number } | null>(null);
     const latestPropsRef = useRef(props);
     latestPropsRef.current = props;
     const [adapterState, setAdapterState] = useState<AdapterState | null>(null);
     const [parsed, setParsed] = useState<ParsedPresentation | null>(null);
+    const [adapterParsed, setAdapterParsed] = useState<ParsedPresentation | null>(null);
+    const latestParsedRef = useRef(parsed);
+    latestParsedRef.current = parsed;
     const [error, setError] = useState<PptxViewerError | null>(null);
     const [loading, setLoading] = useState(true);
     const [internalSlide, setInternalSlide] = useState(initialSlide);
@@ -455,7 +461,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
           }
           return adapter.renderThumbnail(index, target, options?.width ?? 144);
         },
-        getDocument: () => parsed?.document ?? null,
+        getDocument: () => latestParsedRef.current?.document ?? null,
         getSlideIndex: () => latestSlideRef.current,
         getZoom: () => latestZoomRef.current,
         getResolvedZoom: () => latestResolvedZoomRef.current,
@@ -466,6 +472,30 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
 
     useEffect(() => {
       const abort = new AbortController();
+      if (
+        typeof source === 'object' &&
+        source !== null &&
+        'kind' in source &&
+        source.kind === 'parsed-presentation'
+      ) {
+        const updated = adapterRef.current?.updatePresentation(source) ?? false;
+        const viewport =
+          !updated && adapterRef.current ? (scrollElement ?? viewportRef.current) : null;
+        preservedScrollRef.current = viewport
+          ? { top: viewport.scrollTop, left: viewport.scrollLeft }
+          : null;
+        latestParsedRef.current = source;
+        setParsed(source);
+        if (!updated) setAdapterParsed(source);
+        setError(null);
+        setLoading(false);
+        setRuntimeWarnings([]);
+        latestPropsRef.current.onLoad?.(source);
+        for (const warning of source.warnings) latestPropsRef.current.onWarning?.(warning);
+        if (updated) latestPropsRef.current.onReady?.(controller);
+        return () => abort.abort();
+      }
+      preservedScrollRef.current = null;
       adapterGenerationRef.current += 1;
       const previousAdapter = adapterRef.current;
       adapterRef.current = undefined;
@@ -474,6 +504,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       setLoading(true);
       setError(null);
       setParsed(null);
+      setAdapterParsed(null);
       setRuntimeWarnings([]);
       void parsePresentation(source, {
         signal: abort.signal,
@@ -487,6 +518,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         .then((next) => {
           if (abort.signal.aborted) return;
           setParsed(next);
+          setAdapterParsed(next);
           latestPropsRef.current.onLoad?.(next);
           for (const warning of next.warnings) latestPropsRef.current.onWarning?.(warning);
         })
@@ -513,7 +545,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
 
     useEffect(() => {
       const target = viewportRef.current;
-      if (!parsed || !target || error) return;
+      if (!adapterParsed || !target || error) return;
       const generation = ++adapterGenerationRef.current;
       let disposed = false;
       let createdAdapter: ViewerAdapter | undefined;
@@ -535,11 +567,12 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         try {
           const adapter = await createAdapter(
             target,
-            parsed,
+            latestParsedRef.current ?? adapterParsed,
             adapterProps,
             () => latestPropsRef.current,
             (index) => {
               if (!isCurrent()) return;
+              if (preservedScrollRef.current) return;
               lastViewerSlideRef.current = index;
               setInternalSlide(index);
               latestPropsRef.current.onSlideChange?.(index);
@@ -568,7 +601,18 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
             adapter.destroy();
             return;
           }
-          await adapter.render(mode, latestSlideRef.current);
+          const rendering = adapter.render(mode, latestSlideRef.current);
+          const preservedScroll = preservedScrollRef.current;
+          const restoreScroll = () => {
+            if (!preservedScroll || !isCurrent()) return;
+            const viewport = scrollElement ?? target;
+            viewport.scrollTop = preservedScroll.top;
+            viewport.scrollLeft = preservedScroll.left;
+          };
+          restoreScroll();
+          await rendering;
+          restoreScroll();
+          if (isCurrent()) preservedScrollRef.current = null;
           if (!isCurrent()) {
             adapter.destroy();
             return;
@@ -596,7 +640,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
         setAdapterState((current) => (current?.generation === generation ? null : current));
       };
     }, [
-      parsed,
+      adapterParsed,
       error,
       mode,
       fonts,
@@ -634,7 +678,7 @@ export const ReactPptxViewer = forwardRef<PptxViewerController, ReactPptxViewerP
       const next = adapter.search(searchQuery, searchOptions);
       setResults(next);
       onSearchResults?.(next);
-    }, [adapterState, searchQuery, searchOptions, onSearchResults]);
+    }, [adapterState, parsed, searchQuery, searchOptions, onSearchResults]);
     useEffect(() => {
       const adapter = adapterState?.adapter;
       if (!adapter) return;

@@ -183,7 +183,6 @@ function TitleBar() {
     openFilePicker,
     parsed,
     readOnly,
-    editingBusy,
     editingReady,
   } = usePlayground();
   const { resolvedTheme, setTheme } = useTheme();
@@ -214,7 +213,7 @@ function TitleBar() {
         </Button>
         <Button
           className={titleButton}
-          disabled={!parsed || editingBusy || !editingReady}
+          disabled={!parsed || !editingReady}
           onClick={downloadOriginal}
           size="sm"
           variant="ghost"
@@ -1025,20 +1024,41 @@ export function App() {
   const [dragging, setDragging] = React.useState(false);
   const [parsed, setParsed] = React.useState<ParsedPresentation | null>(null);
   const [readOnly, setReadOnly] = React.useState(false);
-  const editing = usePptxEditing(opened, setSource);
+  const pendingEditRenderRef = React.useRef<(() => void) | null>(null);
+  const finishEditRender = React.useCallback(() => {
+    pendingEditRenderRef.current?.();
+    pendingEditRenderRef.current = null;
+  }, []);
+  const applyEditedPresentation = React.useCallback(
+    (next: ParsedPresentation) =>
+      new Promise<void>((resolve) => {
+        pendingEditRenderRef.current?.();
+        pendingEditRenderRef.current = resolve;
+        setSource(next);
+      }),
+    [],
+  );
+  const editing = usePptxEditing(opened, applyEditedPresentation);
+  React.useEffect(() => finishEditRender, [finishEditRender]);
   const legacy = parsed?.document.format === 'ppt';
 
-  const open = React.useCallback((next: OpenedFile, cacheBust = false) => {
-    setParsed(null);
-    setSlideCount(0);
-    setSlide(0);
-    setSearchValue('');
-    setActiveResult(null);
-    setOpened(next);
-    setSource(
-      typeof next.source === 'string' && cacheBust ? `${next.source}?t=${Date.now()}` : next.source,
-    );
-  }, []);
+  const open = React.useCallback(
+    (next: OpenedFile, cacheBust = false) => {
+      finishEditRender();
+      setParsed(null);
+      setSlideCount(0);
+      setSlide(0);
+      setSearchValue('');
+      setActiveResult(null);
+      setOpened(next);
+      setSource(
+        typeof next.source === 'string' && cacheBust
+          ? `${next.source}?t=${Date.now()}`
+          : next.source,
+      );
+    },
+    [finishEditRender],
+  );
 
   const openFile = React.useCallback(
     (file?: File) => {
@@ -1239,12 +1259,15 @@ export function App() {
           </div>
         )}
         {!readOnly && (
-          <div className="px-3 pb-2 text-xs text-muted-foreground" role="status">
+          <div
+            className="h-6 shrink-0 truncate px-3 pb-2 text-xs text-muted-foreground"
+            role="status"
+          >
             {legacy
               ? 'Legacy PPT files are read only. Open a PPTX file to edit.'
               : editing.busy
-                ? 'Applying changes…'
-                : 'Select an object to edit its text. Drag to move, or use the corner handles to resize. Download saves your changes.'}
+                ? 'Saving changes…'
+                : 'Click text to edit. Drag an object’s border to move it. Use the handles to resize. Download saves your changes.'}
           </div>
         )}
 
@@ -1277,9 +1300,13 @@ export function App() {
                   setSlideCount(next.document.slides.length);
                 }}
                 onSlideChange={setSlide}
+                onReady={finishEditRender}
                 onSearchResults={setResults}
                 onZoomChange={(state) => setResolvedZoom(state.resolvedZoom)}
-                onError={(error) => console.error(error)}
+                onError={(error) => {
+                  finishEditRender();
+                  console.error(error);
+                }}
                 height="100%"
               />
             </div>
@@ -1294,6 +1321,7 @@ export function App() {
             disabled={readOnly || legacy || presenting || !editing.ready}
             busy={editing.busy}
             revision={editing.revision}
+            slideIndex={mode === 'slide' ? slide : undefined}
             onEdit={editing.update}
           />
           {blocksOpen && parsed ? (
