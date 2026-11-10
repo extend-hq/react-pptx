@@ -115,6 +115,18 @@ function detectFormat(buffer: ArrayBuffer, hint?: PresentationFormat): Presentat
   );
 }
 
+function presentationWarnings(document: PresentationDocument) {
+  return [
+    ...document.warnings,
+    ...document.slides.flatMap((slide) =>
+      (slide.warnings ?? []).map((warning) => ({
+        ...warning,
+        slideIndex: warning.slideIndex ?? slide.index,
+      })),
+    ),
+  ];
+}
+
 /**
  * Parse a PowerPoint source into the format-neutral public model used by the
  * package-owned renderer.
@@ -128,7 +140,7 @@ export async function parsePresentation(
     return {
       kind: 'parsed-presentation',
       document: source,
-      warnings: source.warnings,
+      warnings: presentationWarnings(source),
     };
   }
 
@@ -161,7 +173,7 @@ export async function parsePresentation(
   return {
     kind: 'parsed-presentation',
     document: nativeDocument,
-    warnings: nativeDocument.warnings,
+    warnings: presentationWarnings(nativeDocument),
   };
 }
 

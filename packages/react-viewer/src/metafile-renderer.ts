@@ -36,6 +36,11 @@ interface Matrix {
   f: number;
 }
 
+type PathCommand =
+  | { kind: 'move' | 'line'; point: Point }
+  | { kind: 'bezier'; first: Point; second: Point; end: Point }
+  | { kind: 'close' };
+
 interface Pen {
   kind: 'pen';
   color: string;
@@ -62,7 +67,7 @@ interface Font {
   escapement: number;
 }
 
-type GdiObject = Pen | Brush | Font;
+type GdiObject = Pen | Brush | Font | { kind: 'unsupported' };
 
 interface DrawingState {
   pen: Pen;
@@ -235,6 +240,28 @@ function cloneState(state: DrawingState): DrawingState {
   };
 }
 
+function multiplyMatrices(left: Matrix, right: Matrix): Matrix {
+  return {
+    a: left.a * right.a + left.c * right.b,
+    b: left.b * right.a + left.d * right.b,
+    c: left.a * right.c + left.c * right.d,
+    d: left.b * right.c + left.d * right.d,
+    e: left.a * right.e + left.c * right.f + left.e,
+    f: left.b * right.e + left.d * right.f + left.f,
+  };
+}
+
+function readMatrix(view: DataView, offset: number): Matrix {
+  return {
+    a: view.getFloat32(offset, true),
+    b: view.getFloat32(offset + 4, true),
+    c: view.getFloat32(offset + 8, true),
+    d: view.getFloat32(offset + 12, true),
+    e: view.getFloat32(offset + 16, true),
+    f: view.getFloat32(offset + 20, true),
+  };
+}
+
 function initialState(bounds: Bounds): DrawingState {
   return {
     pen: { ...DEFAULT_PEN },
@@ -244,7 +271,7 @@ function initialState(bounds: Bounds): DrawingState {
     backgroundColor: '#ffffff',
     backgroundMode: 2,
     textAlign: 0,
-    fillMode: 'nonzero',
+    fillMode: 'evenodd',
     current: { x: 0, y: 0 },
     windowOrigin: { x: bounds.left, y: bounds.top },
     windowExtent: { x: bounds.right - bounds.left, y: bounds.bottom - bounds.top },
@@ -259,6 +286,8 @@ class GdiRenderer {
   readonly objects = new Map<number, GdiObject>();
   readonly stack: DrawingState[] = [];
   state: DrawingState;
+  path: PathCommand[] = [];
+  pathOpen = false;
 
   constructor(
     readonly context: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -293,23 +322,15 @@ class GdiRenderer {
   }
 
   lengthX(value: number): number {
-    return (
-      Math.abs(
-        this.state.mappingEnabled
-          ? (value / (this.state.windowExtent.x || 1)) * (this.state.viewportExtent.x || 1)
-          : value,
-      ) * this.scaleX
-    );
+    const origin = this.point(0, 0);
+    const end = this.point(value, 0);
+    return Math.hypot(end.x - origin.x, end.y - origin.y);
   }
 
   lengthY(value: number): number {
-    return (
-      Math.abs(
-        this.state.mappingEnabled
-          ? (value / (this.state.windowExtent.y || 1)) * (this.state.viewportExtent.y || 1)
-          : value,
-      ) * this.scaleY
-    );
+    const origin = this.point(0, 0);
+    const end = this.point(0, value);
+    return Math.hypot(end.x - origin.x, end.y - origin.y);
   }
 
   applyPen(): boolean {
@@ -317,6 +338,10 @@ class GdiRenderer {
     if (pen.null) return false;
     this.context.strokeStyle = pen.color;
     this.context.lineWidth = Math.max(1, this.lengthX(pen.width || 1));
+    const cap = pen.style & 0x0f00;
+    const join = pen.style & 0xf000;
+    this.context.lineCap = cap === 0x0100 ? 'square' : cap === 0x0200 ? 'butt' : 'round';
+    this.context.lineJoin = join === 0x1000 ? 'bevel' : join === 0x2000 ? 'miter' : 'round';
     const dash = pen.style & 0x0f;
     this.context.setLineDash?.(
       dash === 1 ? [8, 4] : dash === 2 ? [2, 3] : dash === 3 ? [8, 3, 2, 3] : [],
@@ -330,10 +355,62 @@ class GdiRenderer {
     return true;
   }
 
-  paintPath(close = false): void {
-    if (close) this.context.closePath();
-    if (this.applyBrush() && close) this.context.fill(this.state.fillMode);
-    if (this.applyPen()) this.context.stroke();
+  paintPath(fill: boolean, stroke = true): void {
+    if (fill && this.applyBrush()) this.context.fill(this.state.fillMode);
+    if (stroke && this.applyPen()) this.context.stroke();
+  }
+
+  replayPath(commands: PathCommand[], closeFigures = false): void {
+    this.context.beginPath();
+    for (const command of commands) {
+      if (command.kind === 'move') {
+        if (closeFigures) this.context.closePath();
+        this.context.moveTo(command.point.x, command.point.y);
+      } else if (command.kind === 'line') this.context.lineTo(command.point.x, command.point.y);
+      else if (command.kind === 'bezier') {
+        this.context.bezierCurveTo(
+          command.first.x,
+          command.first.y,
+          command.second.x,
+          command.second.y,
+          command.end.x,
+          command.end.y,
+        );
+      } else this.context.closePath();
+    }
+    if (closeFigures) this.context.closePath();
+  }
+
+  drawPath(commands: PathCommand[], fill: boolean): void {
+    const transformed = commands.map((command): PathCommand => {
+      if (command.kind === 'close') return command;
+      if (command.kind === 'bezier') {
+        return {
+          kind: 'bezier',
+          first: this.point(command.first.x, command.first.y),
+          second: this.point(command.second.x, command.second.y),
+          end: this.point(command.end.x, command.end.y),
+        };
+      }
+      return { kind: command.kind, point: this.point(command.point.x, command.point.y) };
+    });
+    if (this.pathOpen) {
+      for (const command of transformed) this.path.push(command);
+    } else {
+      this.replayPath(transformed);
+      this.paintPath(fill);
+    }
+  }
+
+  restore(level: number): void {
+    const index = level < 0 ? this.stack.length + level : level - 1;
+    const restored = this.stack[index];
+    if (!restored) return;
+    while (this.stack.length > index) {
+      this.stack.pop();
+      this.context.restore();
+    }
+    this.state = restored;
   }
 
   selectObject(index: number): void {
@@ -341,7 +418,7 @@ class GdiRenderer {
     if (!object) return;
     if (object.kind === 'pen') this.state.pen = { ...object };
     else if (object.kind === 'brush') this.state.brush = { ...object };
-    else this.state.font = { ...object };
+    else if (object.kind === 'font') this.state.font = { ...object };
   }
 
   drawText(text: string, x: number, y: number): void {
@@ -382,7 +459,7 @@ function stockObject(index: number): GdiObject | undefined {
   if (index === 6) return { ...DEFAULT_PEN, color: '#ffffff' };
   if (index === 7) return { ...DEFAULT_PEN };
   if (index === 8) return { ...DEFAULT_PEN, null: true };
-  if (index >= 10 && index <= 17) return { ...DEFAULT_FONT };
+  if (index >= 10 && index <= 16) return { ...DEFAULT_FONT };
   return undefined;
 }
 
@@ -390,52 +467,251 @@ function validRange(view: DataView, offset: number, length: number): boolean {
   return offset >= 0 && length >= 0 && offset <= view.byteLength - length;
 }
 
+function rectanglePath(bounds: Bounds, radius?: Point): PathCommand[] {
+  const left = Math.min(bounds.left, bounds.right);
+  const right = Math.max(bounds.left, bounds.right);
+  const top = Math.min(bounds.top, bounds.bottom);
+  const bottom = Math.max(bounds.top, bounds.bottom);
+  const rx = Math.min(Math.abs(radius?.x ?? 0), right - left) / 2;
+  const ry = Math.min(Math.abs(radius?.y ?? 0), bottom - top) / 2;
+  if (!rx || !ry) {
+    return [
+      { kind: 'move', point: { x: left, y: top } },
+      { kind: 'line', point: { x: right, y: top } },
+      { kind: 'line', point: { x: right, y: bottom } },
+      { kind: 'line', point: { x: left, y: bottom } },
+      { kind: 'close' },
+    ];
+  }
+  const k = 0.5522847498307936;
+  return [
+    { kind: 'move', point: { x: left + rx, y: top } },
+    { kind: 'line', point: { x: right - rx, y: top } },
+    {
+      kind: 'bezier',
+      first: { x: right - rx * (1 - k), y: top },
+      second: { x: right, y: top + ry * (1 - k) },
+      end: { x: right, y: top + ry },
+    },
+    { kind: 'line', point: { x: right, y: bottom - ry } },
+    {
+      kind: 'bezier',
+      first: { x: right, y: bottom - ry * (1 - k) },
+      second: { x: right - rx * (1 - k), y: bottom },
+      end: { x: right - rx, y: bottom },
+    },
+    { kind: 'line', point: { x: left + rx, y: bottom } },
+    {
+      kind: 'bezier',
+      first: { x: left + rx * (1 - k), y: bottom },
+      second: { x: left, y: bottom - ry * (1 - k) },
+      end: { x: left, y: bottom - ry },
+    },
+    { kind: 'line', point: { x: left, y: top + ry } },
+    {
+      kind: 'bezier',
+      first: { x: left, y: top + ry * (1 - k) },
+      second: { x: left + rx * (1 - k), y: top },
+      end: { x: left + rx, y: top },
+    },
+    { kind: 'close' },
+  ];
+}
+
 function drawRectangle(renderer: GdiRenderer, bounds: Bounds, radius?: Point): void {
-  const first = renderer.point(bounds.left, bounds.top);
-  const second = renderer.point(bounds.right, bounds.bottom);
-  const x = Math.min(first.x, second.x);
-  const y = Math.min(first.y, second.y);
-  const width = Math.abs(second.x - first.x);
-  const height = Math.abs(second.y - first.y);
-  renderer.context.beginPath();
-  if (radius && 'roundRect' in renderer.context) {
-    renderer.context.roundRect(x, y, width, height, [
-      renderer.lengthX(radius.x) / 2,
-      renderer.lengthY(radius.y) / 2,
-    ]);
-  } else renderer.context.rect(x, y, width, height);
-  renderer.paintPath(true);
+  renderer.drawPath(rectanglePath(bounds, radius), true);
 }
 
 function drawEllipse(renderer: GdiRenderer, bounds: Bounds): void {
-  const first = renderer.point(bounds.left, bounds.top);
-  const second = renderer.point(bounds.right, bounds.bottom);
-  const centerX = (first.x + second.x) / 2;
-  const centerY = (first.y + second.y) / 2;
-  renderer.context.beginPath();
-  renderer.context.ellipse(
-    centerX,
-    centerY,
-    Math.abs(second.x - first.x) / 2,
-    Math.abs(second.y - first.y) / 2,
-    0,
-    0,
-    Math.PI * 2,
+  drawRectangle(renderer, bounds, {
+    x: bounds.right - bounds.left,
+    y: bounds.bottom - bounds.top,
+  });
+}
+
+function drawBrushBlit(renderer: GdiRenderer, bounds: Bounds, operation: number): void {
+  const raster = (operation >>> 16) & 0xff;
+  if (raster === 0xf0) {
+    if (!renderer.applyBrush()) return;
+  } else if (raster === 0x00) renderer.context.fillStyle = '#000000';
+  else if (raster === 0xff) renderer.context.fillStyle = '#ffffff';
+  else return;
+  const corners = [
+    renderer.point(bounds.left, bounds.top),
+    renderer.point(bounds.right, bounds.top),
+    renderer.point(bounds.right, bounds.bottom),
+    renderer.point(bounds.left, bounds.bottom),
+  ];
+  renderer.replayPath(pointCommands(corners, true));
+  renderer.context.fill();
+}
+
+interface RgbBitmap {
+  canvas: RenderCanvas;
+  height: number;
+  bottomUp: boolean;
+}
+
+function readRgbBitmap(
+  view: DataView,
+  infoOffset: number,
+  infoLength: number,
+  bitsOffset: number,
+  bitsLength: number,
+): RgbBitmap | undefined {
+  if (
+    infoLength < 40 ||
+    !validRange(view, infoOffset, infoLength) ||
+    !validRange(view, bitsOffset, bitsLength)
+  ) {
+    return undefined;
+  }
+  const headerSize = view.getUint32(infoOffset, true);
+  const width = view.getInt32(infoOffset + 4, true);
+  const signedHeight = view.getInt32(infoOffset + 8, true);
+  const height = Math.abs(signedHeight);
+  const planes = view.getUint16(infoOffset + 12, true);
+  const depth = view.getUint16(infoOffset + 14, true);
+  const compression = view.getUint32(infoOffset + 16, true);
+  if (
+    headerSize < 40 ||
+    headerSize > infoLength ||
+    width < 1 ||
+    height < 1 ||
+    width > DEFAULT_MAX_DIMENSION ||
+    height > DEFAULT_MAX_DIMENSION ||
+    planes !== 1 ||
+    (depth !== 24 && depth !== 32) ||
+    compression !== 0
+  ) {
+    return undefined;
+  }
+  const stride = Math.ceil((width * depth) / 32) * 4;
+  if (stride * height > bitsLength) return undefined;
+  const surface = createSurface(width, height, readOptions(undefined, undefined, undefined));
+  if (!surface) return undefined;
+  const pixels = surface.context.createImageData(width, height);
+  for (let y = 0; y < height; y += 1) {
+    const row = signedHeight > 0 ? height - y - 1 : y;
+    for (let x = 0; x < width; x += 1) {
+      const source = bitsOffset + row * stride + (x * depth) / 8;
+      const target = (y * width + x) * 4;
+      pixels.data[target] = view.getUint8(source + 2);
+      pixels.data[target + 1] = view.getUint8(source + 1);
+      pixels.data[target + 2] = view.getUint8(source);
+      pixels.data[target + 3] = 255;
+    }
+  }
+  surface.context.putImageData(pixels, 0, 0);
+  return { canvas: surface.canvas, height, bottomUp: signedHeight > 0 };
+}
+
+function drawRgbBitmap(
+  renderer: GdiRenderer,
+  bitmap: RgbBitmap,
+  source: Bounds,
+  destination: Bounds,
+): void {
+  const width = source.right - source.left;
+  const height = source.bottom - source.top;
+  if (!width || !height) return;
+  const x = width < 0 ? destination.right : destination.left;
+  const y = height < 0 ? destination.bottom : destination.top;
+  const origin = renderer.point(x, y);
+  const horizontal = renderer.point(width < 0 ? destination.left : destination.right, y);
+  const vertical = renderer.point(x, height < 0 ? destination.top : destination.bottom);
+  renderer.context.save();
+  renderer.context.transform(
+    horizontal.x - origin.x,
+    horizontal.y - origin.y,
+    vertical.x - origin.x,
+    vertical.y - origin.y,
+    origin.x,
+    origin.y,
   );
-  renderer.paintPath(true);
+  renderer.context.drawImage(
+    bitmap.canvas,
+    Math.min(source.left, source.right),
+    bitmap.bottomUp
+      ? bitmap.height - Math.max(source.top, source.bottom)
+      : Math.min(source.top, source.bottom),
+    Math.abs(width),
+    Math.abs(height),
+    0,
+    0,
+    1,
+    1,
+  );
+  renderer.context.restore();
+}
+
+function pointCommands(points: Point[], close: boolean): PathCommand[] {
+  const commands: PathCommand[] = [];
+  for (const [index, point] of points.entries()) {
+    commands.push({ kind: index === 0 ? 'move' : 'line', point });
+  }
+  if (close && points.length > 0) commands.push({ kind: 'close' });
+  return commands;
 }
 
 function drawPoints(renderer: GdiRenderer, points: Point[], close: boolean): void {
-  const first = points[0];
-  if (!first) return;
+  if (points.length > 0) renderer.drawPath(pointCommands(points, close), close);
+}
+
+function drawConnectedPoints(
+  renderer: GdiRenderer,
+  points: Point[],
+  bezier: boolean,
+  continues: boolean,
+): void {
+  const first = continues ? renderer.state.current : points[0];
+  const offset = continues ? 0 : 1;
+  if (!first || (bezier && (points.length - offset) % 3 !== 0)) return;
+  const commands: PathCommand[] = [];
+  const previous = renderer.path.at(-1);
+  const previousEnd =
+    previous?.kind === 'bezier'
+      ? previous.end
+      : previous?.kind === 'move' || previous?.kind === 'line'
+        ? previous.point
+        : undefined;
   const start = renderer.point(first.x, first.y);
-  renderer.context.beginPath();
-  renderer.context.moveTo(start.x, start.y);
-  for (const point of points.slice(1)) {
-    const next = renderer.point(point.x, point.y);
-    renderer.context.lineTo(next.x, next.y);
+  if (
+    !continues ||
+    !renderer.pathOpen ||
+    previousEnd?.x !== start.x ||
+    previousEnd?.y !== start.y
+  ) {
+    commands.push({ kind: 'move', point: first });
   }
-  renderer.paintPath(close);
+  for (let index = offset; index < points.length; index += bezier ? 3 : 1) {
+    if (bezier) {
+      commands.push({
+        kind: 'bezier',
+        first: points[index]!,
+        second: points[index + 1]!,
+        end: points[index + 2]!,
+      });
+    } else commands.push({ kind: 'line', point: points[index]! });
+  }
+  renderer.drawPath(commands, false);
+  if (continues && points.length > 0) renderer.state.current = points[points.length - 1]!;
+}
+
+function readPoints(view: DataView, offset: number, count: number, short: boolean): Point[] {
+  const stride = short ? 4 : 8;
+  if (count > 1_000_000 || !validRange(view, offset, count * stride)) {
+    throw new RangeError('Invalid metafile point array');
+  }
+  const points: Point[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const cursor = offset + index * stride;
+    points.push({
+      x: short ? view.getInt16(cursor, true) : view.getInt32(cursor, true),
+      y: short ? view.getInt16(cursor + 2, true) : view.getInt32(cursor + 4, true),
+    });
+  }
+  return points;
 }
 
 function readBounds32(view: DataView, offset: number): Bounds {
@@ -515,13 +791,19 @@ function replayEmfRecord(
         x: view.getInt32(data, true),
         y: view.getInt32(data + 4, true),
       };
+      if (renderer.pathOpen) {
+        renderer.drawPath([{ kind: 'move', point: renderer.state.current }], false);
+      }
       break;
     case 30: {
       const bounds = readBounds32(view, data);
-      const first = renderer.point(bounds.left, bounds.top);
-      const second = renderer.point(bounds.right, bounds.bottom);
-      renderer.context.beginPath();
-      renderer.context.rect(first.x, first.y, second.x - first.x, second.y - first.y);
+      renderer.replayPath(
+        rectanglePath(bounds).map((command) =>
+          command.kind === 'move' || command.kind === 'line'
+            ? { kind: command.kind, point: renderer.point(command.point.x, command.point.y) }
+            : command,
+        ),
+      );
       renderer.context.clip();
       break;
     }
@@ -529,36 +811,36 @@ function replayEmfRecord(
       renderer.stack.push(cloneState(renderer.state));
       renderer.context.save();
       break;
-    case 34: {
-      const restored = renderer.stack.pop();
-      if (restored) {
-        renderer.state = restored;
-        renderer.context.restore();
-      }
+    case 34:
+      renderer.restore(view.getInt32(data, true));
+      break;
+    case 35:
+      renderer.state.world = readMatrix(view, data);
+      break;
+    case 36: {
+      const matrix = readMatrix(view, data);
+      const mode = view.getUint32(data + 24, true);
+      if (mode === 1) renderer.state.world = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+      // XFORM uses row vectors; Canvas coordinates use the transposed matrix.
+      else if (mode === 2) renderer.state.world = multiplyMatrices(renderer.state.world, matrix);
+      else if (mode === 3) renderer.state.world = multiplyMatrices(matrix, renderer.state.world);
+      else if (mode === 4) renderer.state.world = matrix;
       break;
     }
-    case 35:
-      renderer.state.world = {
-        a: view.getFloat32(data, true),
-        b: view.getFloat32(data + 4, true),
-        c: view.getFloat32(data + 8, true),
-        d: view.getFloat32(data + 12, true),
-        e: view.getFloat32(data + 16, true),
-        f: view.getFloat32(data + 20, true),
-      };
-      break;
     case 37:
       renderer.selectObject(view.getUint32(data, true));
       break;
-    case 38:
+    case 38: {
+      const style = view.getUint32(data + 4, true);
       renderer.objects.set(view.getUint32(data, true), {
         kind: 'pen',
-        style: view.getUint32(data + 4, true),
+        style,
         width: Math.abs(view.getInt32(data + 8, true)) || 1,
         color: colorRef(view, data + 16),
-        null: false,
+        null: (style & 0x0f) === 5,
       });
       break;
+    }
     case 39: {
       const style = view.getUint32(data + 4, true);
       renderer.objects.set(view.getUint32(data, true), {
@@ -586,8 +868,79 @@ function replayEmfRecord(
       break;
     case 54: {
       const end = { x: view.getInt32(data, true), y: view.getInt32(data + 4, true) };
-      drawPoints(renderer, [renderer.state.current, end], false);
-      renderer.state.current = end;
+      drawConnectedPoints(renderer, [end], false, true);
+      break;
+    }
+    case 59:
+      renderer.path = [];
+      renderer.pathOpen = true;
+      break;
+    case 60:
+      renderer.pathOpen = false;
+      break;
+    case 61:
+      if (renderer.pathOpen) renderer.path.push({ kind: 'close' });
+      break;
+    case 62:
+    case 63:
+    case 64:
+      if (!renderer.pathOpen) {
+        renderer.replayPath(renderer.path, type !== 64);
+        renderer.paintPath(type !== 64, type !== 62);
+        renderer.path = [];
+      }
+      break;
+    case 68:
+      renderer.path = [];
+      renderer.pathOpen = false;
+      break;
+    case 76: {
+      const x = view.getInt32(data + 16, true);
+      const y = view.getInt32(data + 20, true);
+      drawBrushBlit(
+        renderer,
+        {
+          left: x,
+          top: y,
+          right: x + view.getInt32(data + 24, true),
+          bottom: y + view.getInt32(data + 28, true),
+        },
+        view.getUint32(data + 32, true),
+      );
+      break;
+    }
+    case 81: {
+      const operation = view.getUint32(data + 60, true);
+      const usage = view.getUint32(data + 56, true);
+      if (operation !== 0x00cc0020 || usage !== 0) break;
+      const bitmap = readRgbBitmap(
+        view,
+        recordOffset + view.getUint32(data + 40, true),
+        view.getUint32(data + 44, true),
+        recordOffset + view.getUint32(data + 48, true),
+        view.getUint32(data + 52, true),
+      );
+      if (!bitmap) break;
+      const x = view.getInt32(data + 16, true);
+      const y = view.getInt32(data + 20, true);
+      const sourceX = view.getInt32(data + 24, true);
+      const sourceY = view.getInt32(data + 28, true);
+      drawRgbBitmap(
+        renderer,
+        bitmap,
+        {
+          left: sourceX,
+          top: sourceY,
+          right: sourceX + view.getInt32(data + 32, true),
+          bottom: sourceY + view.getInt32(data + 36, true),
+        },
+        {
+          left: x,
+          top: y,
+          right: x + view.getInt32(data + 64, true),
+          bottom: y + view.getInt32(data + 68, true),
+        },
+      );
       break;
     }
     case 82:
@@ -614,24 +967,63 @@ function replayEmfRecord(
       }
       break;
     }
+    case 2:
     case 3:
     case 4:
+    case 5:
+    case 6:
     case 85:
     case 86:
-    case 87: {
+    case 87:
+    case 88:
+    case 89: {
       const count = view.getUint32(data + 16, true);
       const short = type >= 85;
-      const stride = short ? 4 : 8;
-      if (count > 1_000_000 || 20 + count * stride > size - 8) break;
-      const points: Point[] = [];
-      for (let index = 0; index < count; index += 1) {
-        const offset = data + 20 + index * stride;
-        points.push({
-          x: short ? view.getInt16(offset, true) : view.getInt32(offset, true),
-          y: short ? view.getInt16(offset + 2, true) : view.getInt32(offset + 4, true),
-        });
+      const points = readPoints(view, data + 20, count, short);
+      const kind = short ? type - 83 : type;
+      if (kind === 3) drawPoints(renderer, points, true);
+      else drawConnectedPoints(renderer, points, kind === 2 || kind === 5, kind >= 5);
+      break;
+    }
+    case 7:
+    case 8:
+    case 90:
+    case 91: {
+      const polygons = view.getUint32(data + 16, true);
+      const count = view.getUint32(data + 20, true);
+      if (polygons > count || !validRange(view, data + 24, polygons * 4)) {
+        throw new RangeError('Invalid metafile polygon array');
       }
-      drawPoints(renderer, points, type === 3 || type === 86);
+      const points = readPoints(view, data + 24 + polygons * 4, count, type >= 90);
+      const close = type === 8 || type === 91;
+      const commands: PathCommand[] = [];
+      let pointOffset = 0;
+      for (let index = 0; index < polygons; index += 1) {
+        const polygonCount = view.getUint32(data + 24 + index * 4, true);
+        if (polygonCount > count - pointOffset) {
+          throw new RangeError('Invalid metafile polygon size');
+        }
+        for (const command of pointCommands(
+          points.slice(pointOffset, pointOffset + polygonCount),
+          close,
+        )) {
+          commands.push(command);
+        }
+        pointOffset += polygonCount;
+      }
+      if (pointOffset !== count) throw new RangeError('Invalid metafile polygon count');
+      renderer.drawPath(commands, close);
+      break;
+    }
+    case 95: {
+      const style = view.getUint32(data + 20, true);
+      renderer.objects.set(view.getUint32(data, true), {
+        kind: 'pen',
+        style,
+        width: view.getUint32(data + 24, true) || 1,
+        color: colorRef(view, data + 32),
+        null: (style & 0x0f) === 5 || view.getUint32(data + 28, true) === 1,
+      });
       break;
     }
   }
@@ -672,7 +1064,13 @@ export async function renderEmfToDataUrl(
       const size = view.getUint32(offset + 4, true);
       if (size < 8 || size % 4 !== 0 || !validRange(view, offset, size)) return null;
       records += 1;
-      const keepGoing = replayEmfRecord(renderer, view, offset, type, size);
+      const keepGoing = replayEmfRecord(
+        renderer,
+        new DataView(buffer, offset, size),
+        0,
+        type,
+        size,
+      );
       offset += size;
       if (!keepGoing) break;
     }
@@ -731,6 +1129,10 @@ function replayWmfRecord(
       renderer.stack.push(cloneState(renderer.state));
       renderer.context.save();
       break;
+    case 0x00f7:
+    case 0x0142:
+      addWmfObject(renderer, { kind: 'unsupported' });
+      break;
     case 0x0102:
       renderer.state.backgroundMode = view.getUint16(data, true);
       break;
@@ -743,14 +1145,9 @@ function replayWmfRecord(
     case 0x012e:
       renderer.state.textAlign = view.getUint16(data, true);
       break;
-    case 0x0127: {
-      const restored = renderer.stack.pop();
-      if (restored) {
-        renderer.state = restored;
-        renderer.context.restore();
-      }
+    case 0x0127:
+      renderer.restore(view.getInt16(data, true));
       break;
-    }
     case 0x01f0:
       renderer.objects.delete(view.getUint16(data, true));
       break;
@@ -786,15 +1183,17 @@ function replayWmfRecord(
       renderer.state.current = end;
       break;
     }
-    case 0x02fa:
+    case 0x02fa: {
+      const style = view.getUint16(data, true);
       addWmfObject(renderer, {
         kind: 'pen',
-        style: view.getUint16(data, true),
+        style,
         width: Math.abs(view.getInt16(data + 2, true)) || 1,
         color: colorRef(view, data + 6),
-        null: false,
+        null: (style & 0x0f) === 5,
       });
       break;
+    }
     case 0x02fc: {
       const style = view.getUint16(data, true);
       addWmfObject(renderer, {
@@ -859,6 +1258,21 @@ function replayWmfRecord(
       );
       break;
     }
+    case 0x061d: {
+      const x = view.getInt16(data + 10, true);
+      const y = view.getInt16(data + 8, true);
+      drawBrushBlit(
+        renderer,
+        {
+          left: x,
+          top: y,
+          right: x + view.getInt16(data + 6, true),
+          bottom: y + view.getInt16(data + 4, true),
+        },
+        view.getUint32(data, true),
+      );
+      break;
+    }
     case 0x0521: {
       const count = view.getUint16(data, true);
       const padded = (count + 1) & ~1;
@@ -905,11 +1319,17 @@ export async function renderWmfToDataUrl(
     if (!surface) return null;
     const renderer = new GdiRenderer(
       surface.context,
-      header.bounds,
+      {
+        left: 0,
+        top: 0,
+        right: header.bounds.right - header.bounds.left,
+        bottom: header.bounds.bottom - header.bounds.top,
+      },
       surface.scaleX,
       surface.scaleY,
       options.fontFamilyMap,
     );
+    renderer.state.windowOrigin = { x: header.bounds.left, y: header.bounds.top };
     renderer.state.mappingEnabled = true;
     let offset = header.recordsOffset;
     let records = 0;
@@ -919,7 +1339,13 @@ export async function renderWmfToDataUrl(
       if (words < 3 || !validRange(view, offset, size)) return null;
       const functionId = view.getUint16(offset + 4, true);
       records += 1;
-      const keepGoing = replayWmfRecord(renderer, view, offset + 6, functionId, size - 6);
+      const keepGoing = replayWmfRecord(
+        renderer,
+        new DataView(buffer, offset, size),
+        6,
+        functionId,
+        size - 6,
+      );
       offset += size;
       if (!keepGoing) break;
     }

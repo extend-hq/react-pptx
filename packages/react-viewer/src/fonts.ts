@@ -87,6 +87,8 @@ const UNIVERSAL_SANS_FALLBACKS = [
   'sans-serif',
 ] as const;
 
+const DEFAULT_OFFICE_FONT_FALLBACKS = ['Calibri', 'Carlito', 'Arial', 'sans-serif'] as const;
+
 function normalizeFamily(value: string): string {
   return value.trim().replace(/^['"]|['"]$/g, '');
 }
@@ -134,7 +136,7 @@ export function resolvePptxFontFamily(
   const office =
     options.useOfficeFallbacks === false
       ? []
-      : (OFFICE_FONT_FALLBACKS[primary.toLowerCase()] ?? []);
+      : (OFFICE_FONT_FALLBACKS[primary.toLowerCase()] ?? DEFAULT_OFFICE_FONT_FALLBACKS);
   const lower = primary.toLowerCase();
   const generic = /serif|times|cambria|mincho|ming|song|batang|david|garamond|palatino/.test(lower)
     ? ['Noto Serif', 'Noto Serif CJK SC', 'serif']

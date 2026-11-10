@@ -36,7 +36,7 @@ The source identity hashes the exact input bytes. Repacking or editing creates a
 
 ## Availability and development
 
-React PPTX 0.4.0 bundles rust-pptx and rust-pptx-wasm 0.2.0. The normal package build uses these registry-pinned crates. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
+The current source build pins rust-pptx and rust-pptx-wasm 0.2.2 to upstream revision `7555683a8e690baf37fe3442d9376b43750276a1`, including the shared OfficeArt gradient and connector fixes. `Cargo.lock` fixes the remaining dependency versions. Published npm versions retain the parser bundled at their release. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
 
 `PptxBlockHighlights` follows the DOCX highlight component's props: `block`, `blocks`, `color`, `colorForBlock` and `onGeometry` for the active block. `onGeometries` additionally reports a map for all supplied targets. `PptxWordHighlights` accepts `word` and `words` with the same active-geometry callback.
 

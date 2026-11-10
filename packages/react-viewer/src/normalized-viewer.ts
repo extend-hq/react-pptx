@@ -673,23 +673,29 @@ function applyText(
     }
     if (paragraph.bullet) {
       const marker = document.createElement('span');
+      const surroundingRun = paragraph.runs.find((run) => run.text.length > 0) ?? paragraph.runs[0];
+      const surroundingSize = surroundingRun?.fontSizePt;
       marker.dataset.rpvBullet = '';
       marker.textContent = `${bulletCharacter(paragraph, counters)}\u00a0`;
+      marker.style.textIndent = '0';
       if (!paragraph.rtl && paragraph.indentEmu !== undefined && paragraph.indentEmu < 0) {
         marker.style.display = 'inline-block';
         marker.style.width = `${-paragraph.indentEmu / EMU_PER_CSS_PIXEL}px`;
       }
-      if (paragraph.bullet.fontFamily) marker.style.fontFamily = paragraph.bullet.fontFamily;
+      const markerFont = paragraph.bullet.fontFamily ??
+        (surroundingRun ? runFontFamily(surroundingRun) : undefined);
+      if (markerFont) marker.style.fontFamily = markerFont;
+      const markerColor = color(surroundingRun?.color);
+      if (markerColor) marker.style.color = markerColor;
       if (paragraph.bullet.fontSizePt !== undefined) {
         marker.style.fontSize = `${paragraph.bullet.fontSizePt * fontScale}pt`;
       } else if (paragraph.bullet.sizePercent !== undefined) {
-        const surroundingSize = paragraph.runs.find(
-          (run) => run.fontSizePt !== undefined,
-        )?.fontSizePt;
         marker.style.fontSize =
           surroundingSize !== undefined
             ? `${surroundingSize * fontScale * paragraph.bullet.sizePercent}pt`
             : `${paragraph.bullet.sizePercent * 100}%`;
+      } else if (surroundingSize !== undefined) {
+        marker.style.fontSize = `${surroundingSize * fontScale}pt`;
       }
       marker.setAttribute('aria-hidden', 'true');
       line.append(marker);

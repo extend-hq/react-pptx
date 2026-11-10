@@ -34,5 +34,6 @@ Both modes dispose observers, blob URLs, asynchronous assets, and highlights on 
 Both parsers converge on the same public model and viewer controller, but fidelity is format-
 specific. The legacy path currently targets static viewing of common PowerPoint 97–2003 decks.
 Advanced OfficeArt effects, editable binary charts and tables, animations, transitions, active
-OLE objects, and media timelines may be omitted or represented by a static picture. Every known
-degradation is surfaced through structured warnings.
+OLE objects, and media timelines may be omitted or represented by a static picture. Structured
+warnings identify parser and renderer limitations, but warning-free output does not establish
+visual equivalence. In particular, unsupported metafile records can leave partial artwork.

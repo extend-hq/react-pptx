@@ -17,3 +17,7 @@ pnpm powerpoint-oracle:compare \
 
 Pixel checks complement, rather than replace, semantic assertions for slide order, bounds, z-order,
 text, relationships, chart series, notes, links, and asset references.
+
+The [November 2026 visual audit](visual-fidelity-audit.md) records a separate
+362-slide comparison, its fixes, measured regressions, and reference limitations.
+That audit does not certify the historical manifest's original environment.
