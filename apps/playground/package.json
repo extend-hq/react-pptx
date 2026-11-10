@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.22.1 <25"
+  },
   "scripts": {
     "predev": "pnpm --dir ../.. fixtures:generate",
     "dev": "vite --force",
