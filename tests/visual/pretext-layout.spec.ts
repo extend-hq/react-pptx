@@ -1,17 +1,17 @@
 import { expect, test } from '@playwright/test';
 
-test('renders the Pretext text-layout regression fixture without viewer errors', async ({ page }) => {
+test('renders the Pretext text-layout regression fixture without viewer errors', async ({
+  page,
+}) => {
   const consoleErrors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
 
   await page.goto('/');
-  await page
-    .locator('input[type=file]')
-    .setInputFiles('tests/fixtures/pretext-layout-cases.pptx');
-  await expect(page.getByText('PPTX · 8 slides')).toBeVisible();
-  await page.getByRole('button', { name: 'Single slide' }).click();
+  await page.locator('input[type=file]').setInputFiles('tests/fixtures/pretext-layout-cases.pptx');
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 8');
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Normal', exact: true }).click();
 
   const markers = [
     'Pretext layout',

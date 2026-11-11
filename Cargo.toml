@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 path = "packages/wasm/src/bridge.rs"
 
 [dependencies]
-rust-pptx-wasm = { git = "https://github.com/extend-hq/rust-office.git", rev = "7555683a8e690baf37fe3442d9376b43750276a1" }
+rust-pptx-wasm = "=0.3.0"
 
 [dev-dependencies]
-rust-pptx = { git = "https://github.com/extend-hq/rust-office.git", rev = "7555683a8e690baf37fe3442d9376b43750276a1" }
+rust-pptx = "=0.3.0"
 
 [profile.release]
 opt-level = "z"

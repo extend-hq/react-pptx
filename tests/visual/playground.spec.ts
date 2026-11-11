@@ -6,7 +6,10 @@ test('renders the generated PPTX and exposes viewer controls', async ({ page }) 
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
   await page.goto('/');
-  await expect(page.getByText('PPTX · 2 slides')).toBeVisible();
+  await page
+    .locator('input[type=file]')
+    .setInputFiles('tests/fixtures/generated/viewer-smoke.pptx');
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 2');
   const titleFontStack = await page
     .locator('span')
     .filter({ hasText: /^A deterministic PowerPoint fixture$/ })
@@ -18,24 +21,29 @@ test('renders the generated PPTX and exposes viewer controls', async ({ page }) 
   await expect(page.getByRole('button', { name: 'Go to slide 1' })).toBeVisible();
   await expect(page.getByText('A deterministic PowerPoint fixture').last()).toBeVisible();
 
-  await page.getByRole('button', { name: 'Slides' }).click();
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Thumbnails' }).click();
   await expect(page.getByRole('navigation', { name: 'Slide thumbnails' })).toBeHidden();
-  await page.getByRole('button', { name: 'Slides' }).click();
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Thumbnails' }).click();
   await expect(page.getByRole('navigation', { name: 'Slide thumbnails' })).toBeVisible();
 
-  await page.getByRole('textbox', { name: 'Search slide text' }).fill('Measured');
-  await expect(page.getByText('1 hits')).toBeVisible();
-  await page.getByRole('button', { name: 'Next search result' }).click();
-  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('2 / 2');
+  await page.getByRole('textbox', { name: 'Find slide text' }).fill('Measured');
+  await expect(page.getByText('1 result', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Next result' }).click();
+  await expect(page.getByRole('group', { name: 'Navigate' })).toContainText('2 / 2');
 
-  await page.getByRole('button', { name: 'Single slide' }).click();
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Normal', exact: true }).click();
   await expect(page.getByText('Cached navigation').last()).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 
 test('shows owned parser diagnostics and accepts file uploads', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Diagnostics' }).click();
+  await page
+    .locator('input[type=file]')
+    .setInputFiles('tests/fixtures/generated/viewer-smoke.pptx');
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 2');
+  await page.getByRole('tab', { name: 'Developer' }).click();
+  await page.getByRole('switch', { name: 'Diagnostics' }).check();
   const diagnostics = page.getByRole('complementary', { name: 'Rendering diagnostics' });
   await expect(diagnostics).toContainText('PPTX');
   await expect(diagnostics).toContainText('Slides2');
@@ -43,7 +51,7 @@ test('shows owned parser diagnostics and accepts file uploads', async ({ page })
   await page
     .locator('input[type=file]')
     .setInputFiles('tests/fixtures/generated/viewer-smoke.pptx');
-  await expect(page.getByText('PPTX · 2 slides')).toBeVisible();
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 2');
 });
 
 test('loads and renders a real-world legacy PPT file', async ({ page }) => {
@@ -57,14 +65,14 @@ test('loads and renders a real-world legacy PPT file', async ({ page }) => {
     .locator('input[type=file]')
     .setInputFiles('tests/fixtures/legacy/file-example-250kb.ppt');
 
-  await expect(page.getByText('PPT · 3 slides')).toBeVisible();
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 3');
   const viewport = page.getByTestId('pptx-viewport');
   await expect(viewport.getByRole('region', { name: 'Slide 1 of 3' })).toContainText('Lorem ipsum');
   await expect(viewport).not.toContainText('Click to edit the title text format');
 
-  await page.getByRole('button', { name: 'Single slide' }).click();
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Normal', exact: true }).click();
   await page.getByRole('button', { name: 'Next slide' }).click();
-  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('2 / 3');
+  await expect(page.getByRole('group', { name: 'Navigate' })).toContainText('2 / 3');
   const chartPreview = viewport
     .getByRole('region', { name: 'Slide 2 of 3' })
     .getByRole('img', { name: 'Legacy picture 5122' });
@@ -85,12 +93,13 @@ test('loads and renders a real-world legacy PPT file', async ({ page }) => {
   expect(chartDimensions.height).toBeGreaterThan(0);
 
   await page.getByRole('button', { name: 'Next slide' }).click();
-  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('3 / 3');
+  await expect(page.getByRole('group', { name: 'Navigate' })).toContainText('3 / 3');
   await expect(viewport.getByRole('region', { name: 'Slide 3 of 3' })).toContainText('Table');
 
   await expect(page.getByRole('button', { name: 'Go to slide 3' })).toBeVisible();
 
-  await page.getByRole('button', { name: 'Diagnostics' }).click();
+  await page.getByRole('tab', { name: 'Developer' }).click();
+  await page.getByRole('switch', { name: 'Diagnostics' }).check();
   const diagnostics = page.getByRole('complementary', { name: 'Rendering diagnostics' });
   await expect(diagnostics).toContainText('PPT');
   await expect(diagnostics).toContainText('degraded-rendering');
@@ -103,9 +112,13 @@ test('scrolls the virtualized list smoothly without snapping back', async ({ pag
     if (message.type() === 'error') consoleErrors.push(message.text());
   });
   await page.goto('/');
-  await expect(page.getByText('PPTX · 2 slides')).toBeVisible();
+  await page
+    .locator('input[type=file]')
+    .setInputFiles('tests/fixtures/generated/viewer-smoke.pptx');
+  await expect(page.getByRole('contentinfo')).toContainText('Slide 1 of 2');
   const viewport = page.getByTestId('pptx-viewport');
-  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('1 / 2');
+  await page.getByRole('contentinfo').getByRole('button', { name: 'Continuous' }).click();
+  await expect(page.getByRole('group', { name: 'Navigate' })).toContainText('1 / 2');
   // Fixed absolute offsets inside a full-height sizer keep the scroll
   // geometry stable while slides mount and unmount.
   await expect(viewport.locator('[data-rpv-virtual-sizer]')).toHaveCount(1);
@@ -114,7 +127,7 @@ test('scrolls the virtualized list smoothly without snapping back', async ({ pag
   await viewport.evaluate((element) => {
     element.scrollTop = element.scrollHeight;
   });
-  await expect(page.getByRole('group', { name: 'Slide navigation' })).toContainText('2 / 2');
+  await expect(page.getByRole('group', { name: 'Navigate' })).toContainText('2 / 2');
 
   // The viewport must hold an arbitrary mid-scroll position: controlled
   // hosts echo onSlideChange back into slideIndex, and that echo used to

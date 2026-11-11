@@ -451,6 +451,7 @@ export interface ChartNode extends BaseSlideNode {
    * fields above remain available for search and fallbacks.
    */
   chartXml?: string;
+  chartPartName?: string;
   /** Chart artwork at the dimensions of the slide frame. */
   chartSvg?: string;
   /** Companion Microsoft chart style part (`style*.xml`), when present. */

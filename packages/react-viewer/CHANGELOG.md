@@ -1,5 +1,15 @@
 # @extend-ai/react-pptx
 
+## 0.5.0
+
+### Minor Changes
+
+- Bundle the published rust-pptx and rust-pptx-wasm 0.3.0 crates, with rust-office-art 0.1.8 and rust-office-charts 0.1.10, including corrected gradients, connector geometry, text styles, script fonts, and bullet inheritance.
+
+  Expand EMF/WMF rendering for compound paths, curves, transforms, pen styles, brush fills, and RGB bitmap transfers. Improve font fallback and bullet layout, and expose slide-scoped parser warnings.
+
+  Update compatible presentations in place and preserve scroll position when rebuilding, keeping the viewer stable as edited content is applied.
+
 ## 0.4.1
 
 - Fix parsing with default options when Web Workers are unavailable, including server-side parsing. Pass the same explicit boolean defaults used by the worker path.

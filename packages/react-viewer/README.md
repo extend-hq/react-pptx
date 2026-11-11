@@ -306,7 +306,7 @@ slides. The built-in `showThumbnails` filmstrip follows the same windowed behavi
 
 ## Block and word citations
 
-Version 0.4.0 bundles the Rust 0.2.0 block extractor. Call `extractPresentationBlocks(parsed.document, { includeWords: true })`, then pass its blocks or words to `PptxBlockHighlights` or `PptxWordHighlights`. The components accept a viewer `rootRef`, selected target, optional multiple targets, color and an `onGeometry` callback for the selected target, following the React DOCX API.
+Version 0.5.0 bundles the Rust 0.3.0 parser and block extractor, with rust-office-art 0.1.8 and rust-office-charts 0.1.10. Call `extractPresentationBlocks(parsed.document, { includeWords: true })`, then pass its blocks or words to `PptxBlockHighlights` or `PptxWordHighlights`. The components accept a viewer `rootRef`, selected target, optional multiple targets, color and an `onGeometry` callback for the selected target, following the React DOCX API.
 
 `resolvePptxSourceGeometry`, `resolvePptxBlockGeometries` and `resolvePptxWordGeometries` return axis-aligned slide-relative fragments with explicit rendered, unmounted, invisible or unresolved states. `revealPptxSource(controller, root, ref)` mounts and navigates to the referenced slide. `normalizedPptxBoundingBox` converts a fragment to fractional slide coordinates.
 
