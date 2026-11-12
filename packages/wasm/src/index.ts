@@ -1,6 +1,9 @@
 import type { WasmParseOptions } from './options';
 export type { WasmParseOptions } from './options';
 
+/** The source formats the parser detects. */
+export type WasmPresentationFormat = 'ppt' | 'pptx' | 'odp' | 'odg';
+
 type WasmModule = typeof import('../pkg/pptx_wasm.js');
 
 export type WasmSource = string | URL | Request | Response | BufferSource | WebAssembly.Module;
@@ -29,10 +32,10 @@ export async function parsePresentation(bytes: Uint8Array, options?: WasmParseOp
   return runtime.parse_presentation(bytes, options);
 }
 
-export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt' | 'pptx'> {
+export async function detectPresentationFormat(bytes: Uint8Array): Promise<WasmPresentationFormat> {
   await initWasm();
   const runtime = await runtimePromise!;
-  return runtime.detect_presentation_format(bytes) as 'ppt' | 'pptx';
+  return runtime.detect_presentation_format(bytes) as WasmPresentationFormat;
 }
 
 export { parsePresentation as parse_presentation };

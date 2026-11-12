@@ -36,7 +36,7 @@ The source identity hashes the exact input bytes. Repacking or editing creates a
 
 ## Availability and development
 
-React PPTX 0.5.0 bundles the published rust-pptx and rust-pptx-wasm 0.3.0 crates, with rust-office-art 0.1.8 and rust-office-charts 0.1.10. These include the shared OfficeArt gradient and connector fixes and corrected text and bullet inheritance. `Cargo.lock` fixes the remaining dependency versions. Older npm versions retain the parser bundled at their release. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
+React PPTX 0.6.0 bundles the published rust-pptx and rust-pptx-wasm 0.4.0 crates, with rust-odf 0.1.0, rust-office-art 0.1.8 and rust-office-charts 0.1.10. These add OpenDocument presentations and drawings to the shared OfficeArt gradient and connector fixes and corrected text and bullet inheritance of the previous release. `Cargo.lock` fixes the remaining dependency versions. Older npm versions retain the parser bundled at their release. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
 
 `PptxBlockHighlights` follows the DOCX highlight component's props: `block`, `blocks`, `color`, `colorForBlock` and `onGeometry` for the active block. `onGeometries` additionally reports a map for all supplied targets. `PptxWordHighlights` accepts `word` and `words` with the same active-geometry callback.
 

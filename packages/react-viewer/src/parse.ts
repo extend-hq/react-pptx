@@ -1,3 +1,4 @@
+import { isPresentationFormat } from '@extend-ai/react-pptx-model';
 import type { PresentationDocument, PresentationFormat } from '@extend-ai/react-pptx-model';
 import { PptxViewerError, throwIfAborted, toPptxViewerError } from './errors';
 import type {
@@ -26,7 +27,7 @@ function isPresentationDocument(source: PresentationSource): source is Presentat
     !!source &&
     typeof source === 'object' &&
     'format' in source &&
-    (source.format === 'ppt' || source.format === 'pptx') &&
+    isPresentationFormat(source.format) &&
     'slides' in source &&
     Array.isArray(source.slides)
   );
@@ -93,10 +94,48 @@ async function readSource(
   return buffer;
 }
 
+const OPENDOCUMENT_PREFIX = 'application/vnd.oasis.opendocument.';
+
+/**
+ * The OpenDocument format a media type names, or `undefined` for an
+ * OpenDocument type that is not a presentation or drawing (text, spreadsheet).
+ */
+function openDocumentFormat(mediaType: string): PresentationFormat | undefined {
+  const kind = mediaType.slice(OPENDOCUMENT_PREFIX.length);
+  if (kind.startsWith('presentation')) return 'odp';
+  if (kind.startsWith('graphics')) return 'odg';
+  return undefined;
+}
+
+function unsupportedOpenDocument(mediaType: string): PptxViewerError {
+  return new PptxViewerError(
+    'unsupported-format',
+    `This OpenDocument file is not a presentation or drawing (${mediaType}).`,
+    { details: { mediaType } },
+  );
+}
+
+/**
+ * Identifies the container from its first bytes. The parser makes the final
+ * decision; this only rejects files that cannot be a presentation before
+ * they reach it and labels errors.
+ */
 function detectFormat(buffer: ArrayBuffer, hint?: PresentationFormat): PresentationFormat {
   if (hint) return hint;
-  const bytes = new Uint8Array(buffer, 0, Math.min(8, buffer.byteLength));
-  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return 'pptx';
+  const bytes = new Uint8Array(buffer, 0, Math.min(4096, buffer.byteLength));
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
+    // An OpenDocument package stores its media type, uncompressed, as the
+    // first entry: a 30-byte local header, the name `mimetype`, then the type.
+    const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 160)));
+    if (head.slice(30, 38) === 'mimetype' && head.startsWith(OPENDOCUMENT_PREFIX, 38)) {
+      // Media types are lower case, so the next entry's `PK` signature ends the match.
+      const mediaType = /^[a-z0-9.+\/-]+/.exec(head.slice(38))?.[0] ?? OPENDOCUMENT_PREFIX;
+      const format = openDocumentFormat(mediaType);
+      if (!format) throw unsupportedOpenDocument(mediaType);
+      return format;
+    }
+    return 'pptx';
+  }
   if (
     bytes[0] === 0xd0 &&
     bytes[1] === 0xcf &&
@@ -109,9 +148,22 @@ function detectFormat(buffer: ArrayBuffer, hint?: PresentationFormat): Presentat
   ) {
     return 'ppt';
   }
+  // A flat OpenDocument file is one XML document that names its media type
+  // on the root element.
+  const text = new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '').trimStart();
+  if (text.startsWith('<')) {
+    const mediaType = /office:mimetype\s*=\s*["'](application\/vnd\.oasis\.opendocument\.[a-z.+-]+)["']/.exec(
+      text,
+    )?.[1];
+    if (mediaType) {
+      const format = openDocumentFormat(mediaType);
+      if (!format) throw unsupportedOpenDocument(mediaType);
+      return format;
+    }
+  }
   throw new PptxViewerError(
     'unsupported-format',
-    'The file is neither an OOXML PowerPoint presentation (.pptx) nor a legacy PowerPoint compound document (.ppt).',
+    'The file is not a PowerPoint presentation (.pptx, .ppt) or an OpenDocument presentation or drawing (.odp, .odg).',
   );
 }
 
@@ -128,8 +180,8 @@ function presentationWarnings(document: PresentationDocument) {
 }
 
 /**
- * Parse a PowerPoint source into the format-neutral public model used by the
- * package-owned renderer.
+ * Parse a PowerPoint or OpenDocument presentation source into the
+ * format-neutral public model used by the package-owned renderer.
  */
 export async function parsePresentation(
   source: PresentationSource,
@@ -167,7 +219,9 @@ export async function parsePresentation(
       format === 'ppt' ? 'unsupported-format' : 'parse-failed',
       format === 'ppt'
         ? 'This legacy .ppt file could not be decoded by the native parser.'
-        : 'The PowerPoint presentation could not be decoded by the native parser.',
+        : format === 'odp' || format === 'odg'
+          ? 'The OpenDocument file could not be decoded by the native parser.'
+          : 'The PowerPoint presentation could not be decoded by the native parser.',
     );
   }
   return {

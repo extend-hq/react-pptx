@@ -81,6 +81,19 @@ const SAMPLES = [
   { file: 'charts-showcase.pptx', label: 'Charts showcase', source: '/charts-showcase.pptx' },
 ] as const;
 const DEFAULT_SAMPLE = SAMPLES[0];
+// PowerPoint, then OpenDocument presentations and drawings with their templates and flat XML forms.
+const OPENABLE_EXTENSIONS = ['pptx', 'ppt', 'odp', 'otp', 'fodp', 'odg', 'otg', 'fodg'];
+const OPENABLE_ACCEPT = [
+  ...OPENABLE_EXTENSIONS.map((extension) => `.${extension}`),
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/vnd.oasis.opendocument.presentation',
+  'application/vnd.oasis.opendocument.presentation-template',
+  'application/vnd.oasis.opendocument.presentation-flat-xml',
+  'application/vnd.oasis.opendocument.graphics',
+  'application/vnd.oasis.opendocument.graphics-template',
+  'application/vnd.oasis.opendocument.graphics-flat-xml',
+].join(',');
 const ZOOM_PRESETS = [50, 75, 100, 125, 150, 200, 300] as const;
 const MIN_ZOOM = 10;
 const MAX_ZOOM = 400;
@@ -154,7 +167,7 @@ type Playground = {
   downloadOriginal: () => void;
   readOnly: boolean;
   setReadOnly: (value: boolean) => void;
-  legacy: boolean;
+  viewOnly: boolean;
   editingBusy: boolean;
   editingReady: boolean;
   canUndo: boolean;
@@ -398,7 +411,7 @@ function InsertRibbon() {
         </Menu>
       </RibbonGroup>
       <span className="px-2 text-xs text-muted-foreground">
-        Or drop a .ppt or .pptx file anywhere. Files are parsed locally in your browser.{' '}
+        Or drop a .pptx, .ppt, .odp or .odg file anywhere. Files are parsed locally in your browser.{' '}
         <a
           className="underline underline-offset-2"
           href="/samples/ATTRIBUTION.txt"
@@ -684,7 +697,7 @@ function DeveloperRibbon() {
 }
 
 function Ribbon() {
-  const { readOnly, setReadOnly, legacy } = usePlayground();
+  const { readOnly, setReadOnly, viewOnly } = usePlayground();
   const [tab, setTab] = React.useState<RibbonTab>('Home');
   const panelClass = 'flex items-center';
 
@@ -714,7 +727,7 @@ function Ribbon() {
         <div className="ms-auto flex shrink-0 items-center">
           <RibbonToggle
             checked={readOnly}
-            disabled={legacy}
+            disabled={viewOnly}
             label="Read only"
             onCheckedChange={setReadOnly}
           />
@@ -1040,7 +1053,8 @@ export function App() {
   );
   const editing = usePptxEditing(opened, applyEditedPresentation);
   React.useEffect(() => finishEditRender, [finishEditRender]);
-  const legacy = parsed?.document.format === 'ppt';
+  // Only PowerPoint packages can be edited and saved; every other format is view only.
+  const viewOnly = !!parsed && parsed.document.format !== 'pptx';
 
   const open = React.useCallback(
     (next: OpenedFile, cacheBust = false) => {
@@ -1064,7 +1078,7 @@ export function App() {
     (file?: File) => {
       if (!file) return;
       const extension = file.name.split('.').pop()?.toLowerCase();
-      if (extension !== 'ppt' && extension !== 'pptx') return;
+      if (!extension || !OPENABLE_EXTENSIONS.includes(extension)) return;
       open({ name: file.name, source: file });
     },
     [open],
@@ -1129,7 +1143,7 @@ export function App() {
         (event.metaKey || event.ctrlKey) &&
         ['z', 'y'].includes(event.key.toLowerCase()) &&
         !readOnly &&
-        !legacy &&
+        !viewOnly &&
         !presenting
       ) {
         event.preventDefault();
@@ -1151,7 +1165,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [presenting, startSlideShow, viewer.controller, readOnly, legacy, editing.update]);
+  }, [presenting, startSlideShow, viewer.controller, readOnly, viewOnly, editing.update]);
 
   const playground: Playground = {
     controller: viewer.controller,
@@ -1191,9 +1205,9 @@ export function App() {
     downloadOriginal: () => {
       editing.download(opened.name);
     },
-    readOnly: readOnly || legacy,
+    readOnly: readOnly || viewOnly,
     setReadOnly,
-    legacy,
+    viewOnly,
     editingBusy: editing.busy,
     editingReady: editing.ready,
     canUndo: editing.canUndo,
@@ -1240,7 +1254,7 @@ export function App() {
       >
         <input
           ref={inputRef}
-          accept=".ppt,.pptx,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          accept={OPENABLE_ACCEPT}
           className="hidden"
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -1263,8 +1277,8 @@ export function App() {
             className="h-6 shrink-0 truncate px-3 pb-2 text-xs text-muted-foreground"
             role="status"
           >
-            {legacy
-              ? 'Legacy PPT files are read only. Open a PPTX file to edit.'
+            {viewOnly
+              ? 'This format is read only. Open a PPTX file to edit.'
               : editing.busy
                 ? 'Saving changes…'
                 : 'Click text to edit. Drag an object’s border to move it. Use the handles to resize. Download saves your changes.'}
@@ -1318,7 +1332,7 @@ export function App() {
             }
             rootRef={blockRootRef}
             parsed={parsed}
-            disabled={readOnly || legacy || presenting || !editing.ready}
+            disabled={readOnly || viewOnly || presenting || !editing.ready}
             busy={editing.busy}
             revision={editing.revision}
             slideIndex={mode === 'slide' ? slide : undefined}

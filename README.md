@@ -4,7 +4,7 @@
 [![Monthly npm downloads](https://img.shields.io/npm/dm/@extend-ai/react-pptx.svg)](https://www.npmjs.com/package/@extend-ai/react-pptx)
 [![CI](https://github.com/extend-hq/react-pptx/actions/workflows/ci.yml/badge.svg)](https://github.com/extend-hq/react-pptx/actions/workflows/ci.yml)
 
-Browser-native React viewer for `.pptx` and legacy `.ppt`, using a Rust/WASM parser, a normalized presentation model and virtualized HTML/SVG rendering.
+Browser-native React viewer for `.pptx`, legacy `.ppt` and OpenDocument presentations and drawings (`.odp`, `.odg`), using a Rust/WASM parser, a normalized presentation model and virtualized HTML/SVG rendering.
 
 ## Quick start
 
@@ -56,6 +56,7 @@ Parser and shared rendering fixes belong in [Rust Office](https://github.com/ext
 ## Rendering boundaries
 
 - Legacy `.ppt` is parsed directly in the browser. Unsupported content emits `degraded-rendering` warnings through `onWarning` / `showDiagnostics`; see [legacy format support](docs/legacy-ppt.md).
+- OpenDocument presentations and drawings are parsed directly in the browser and are view only; see [OpenDocument support](docs/opendocument.md) for the file types and what is not drawn.
 - Viewing is static. Slide transitions and animation timelines are exposed on the model (`transition`, `timing`) but not played; macros, active OLE controls, password decryption and authoring/export are outside the supported scope. Embedded audio and video play through native controls, and embedded objects are offered as downloads.
 - SmartArt uses saved drawings; 3D models display saved Office previews. `include3dModels` optionally exposes original assets and scene metadata. See [OfficeArt visuals](packages/react-viewer/README.md#officeart-visuals).
 

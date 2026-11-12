@@ -4,6 +4,9 @@ export type { WasmParseOptions } from './options';
 
 import initialize, { detect_presentation_format, parse_presentation } from '../pkg/pptx_wasm.js';
 
+/** The source formats the parser detects. */
+export type WasmPresentationFormat = 'ppt' | 'pptx' | 'odp' | 'odg';
+
 export type WasmSource =
   | string
   | URL
@@ -31,9 +34,9 @@ export async function parsePresentation(bytes: Uint8Array, options?: WasmParseOp
   return parse_presentation(bytes, options);
 }
 
-export async function detectPresentationFormat(bytes: Uint8Array): Promise<'ppt' | 'pptx'> {
+export async function detectPresentationFormat(bytes: Uint8Array): Promise<WasmPresentationFormat> {
   await initWasm();
-  return detect_presentation_format(bytes) as 'ppt' | 'pptx';
+  return detect_presentation_format(bytes) as WasmPresentationFormat;
 }
 
 export async function extractPresentationBlocks(document: unknown, options?: { includeWords?: boolean; includeNotes?: boolean }): Promise<unknown> {

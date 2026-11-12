@@ -13,7 +13,11 @@ export type * from './types';
 export type { UsePptxPresentationState, UsePptxViewerResult } from './hooks';
 
 export { extractPresentationBlocks } from './wasm';
-export { flattenPresentationBlocks } from '@extend-ai/react-pptx-model';
+export {
+  flattenPresentationBlocks,
+  isPresentationFormat,
+  PRESENTATION_FORMATS,
+} from '@extend-ai/react-pptx-model';
 export type {
   PptxSourceRef,
   PresentationBlock,

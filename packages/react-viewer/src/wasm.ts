@@ -1,5 +1,11 @@
 import type { WasmParseOptions } from '@extend-ai/react-pptx-wasm';
-import type { ExtractPresentationBlocksOptions, StructuredPresentation, PresentationDocument } from '@extend-ai/react-pptx-model';
+import { isPresentationFormat } from '@extend-ai/react-pptx-model';
+import type {
+  ExtractPresentationBlocksOptions,
+  StructuredPresentation,
+  PresentationDocument,
+  PresentationFormat,
+} from '@extend-ai/react-pptx-model';
 import { PptxViewerError } from './errors';
 
 export type WasmSource =
@@ -86,7 +92,7 @@ function isPresentationDocument(value: unknown): value is PresentationDocument {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<PresentationDocument>;
   return (
-    (candidate.format === 'ppt' || candidate.format === 'pptx') &&
+    isPresentationFormat(candidate.format) &&
     !!candidate.size &&
     Array.isArray(candidate.slides) &&
     Array.isArray(candidate.warnings)
@@ -100,7 +106,7 @@ function parserFailure(error: unknown): PptxViewerError | null {
   if (normalized.includes('encrypted presentation')) {
     return new PptxViewerError(
       'encrypted-document',
-      'Encrypted PowerPoint presentations are not supported.',
+      'Encrypted presentations are not supported.',
       { cause: error },
     );
   }
@@ -115,7 +121,7 @@ function parserFailure(error: unknown): PptxViewerError | null {
 
 export async function parseWithWasm(
   bytes: Uint8Array,
-  options?: { signal?: AbortSignal; formatHint?: 'ppt' | 'pptx'; include3dModels?: boolean },
+  options?: { signal?: AbortSignal; formatHint?: PresentationFormat; include3dModels?: boolean },
 ): Promise<PresentationDocument | null> {
   try {
     if (

@@ -1,7 +1,18 @@
 import type { SlideTiming, SlideTransition } from './animation';
 export * from './animation';
 
-export type PresentationFormat = 'pptx' | 'ppt';
+/**
+ * The source format the parser detected: PowerPoint (`pptx`), legacy
+ * PowerPoint (`ppt`), OpenDocument presentation (`odp`) or OpenDocument
+ * drawing (`odg`).
+ */
+export type PresentationFormat = 'pptx' | 'ppt' | 'odp' | 'odg';
+
+export const PRESENTATION_FORMATS: readonly PresentationFormat[] = ['pptx', 'ppt', 'odp', 'odg'];
+
+export function isPresentationFormat(value: unknown): value is PresentationFormat {
+  return typeof value === 'string' && (PRESENTATION_FORMATS as readonly string[]).includes(value);
+}
 
 export interface PresentationSize {
   widthEmu: number;

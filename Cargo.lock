@@ -552,6 +552,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "rust-odf"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3866913b9e947fd71b995f8dc757231de2a30198ba09d7bab3302f8c50dd9f01"
+dependencies = [
+ "base64",
+ "memchr",
+ "miniz_oxide",
+ "quick-xml",
+ "zlib-rs",
+]
+
+[[package]]
 name = "rust-office-art"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -586,9 +599,9 @@ dependencies = [
 
 [[package]]
 name = "rust-pptx"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c9f5d96ede6eb6cace648be447a2122829aac26eb015e611af5bde5c3463e58e"
+checksum = "2e73f7128b715c4cb6225e85972eaa5609f2b2b68b37f880f0e0b71ac43e9c22"
 dependencies = [
  "base64",
  "base64-simd",
@@ -597,6 +610,7 @@ dependencies = [
  "flate2",
  "memchr",
  "quick-xml",
+ "rust-odf",
  "rust-office-art",
  "rust-office-charts",
  "serde",
@@ -610,9 +624,9 @@ dependencies = [
 
 [[package]]
 name = "rust-pptx-wasm"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15680c4ce09179203661c8fc907e9944b5034dcd518ccda2a1587b6de4333fa7"
+checksum = "900df3a45bdbba5c2c503148ff23f8e9da6761e8afed6aa71819ef93b520d9e6"
 dependencies = [
  "rust-pptx",
  "serde",
