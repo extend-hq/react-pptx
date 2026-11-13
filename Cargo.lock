@@ -553,9 +553,9 @@ checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
 name = "rust-odf"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3866913b9e947fd71b995f8dc757231de2a30198ba09d7bab3302f8c50dd9f01"
+checksum = "31bd441ed53bc485e9fe8f9335c29fa52bd808d6fa137e5b75315f0c78995581"
 dependencies = [
  "base64",
  "memchr",
@@ -566,9 +566,9 @@ dependencies = [
 
 [[package]]
 name = "rust-office-art"
-version = "0.1.8"
+version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5326ba85e56257618204fbc2dee7d12cd7bca420ac500ce71136e33b63acb7cb"
+checksum = "f27c4afe14a36fd77f51834ac582d84b4a94699c966888e107ecf255bde27eff"
 dependencies = [
  "base64",
  "image",
@@ -577,6 +577,7 @@ dependencies = [
  "memchr",
  "quick-xml",
  "roxmltree",
+ "rust-odf",
  "rustybuzz",
  "serde",
  "serde_bytes",
@@ -584,14 +585,15 @@ dependencies = [
 
 [[package]]
 name = "rust-office-charts"
-version = "0.1.10"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4b6d60db065ae6993ee69b162de6210a9d7b773b6ca9ad0966bb7588248788a"
+checksum = "3b358d5dc40bd98842bb545a510bc780d092230c4afcd00ddedb3a2c2f72144e"
 dependencies = [
  "base64",
  "kurbo",
  "miniz_oxide",
  "roxmltree",
+ "rust-odf",
  "rust-office-art",
  "serde",
  "svgtypes",
@@ -599,9 +601,9 @@ dependencies = [
 
 [[package]]
 name = "rust-pptx"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e73f7128b715c4cb6225e85972eaa5609f2b2b68b37f880f0e0b71ac43e9c22"
+checksum = "ed4ce03c266d4a1542f102c2f5fec7cad416d5932bb4ccfec847765c5dc5531b"
 dependencies = [
  "base64",
  "base64-simd",
@@ -624,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "rust-pptx-wasm"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "900df3a45bdbba5c2c503148ff23f8e9da6761e8afed6aa71819ef93b520d9e6"
+checksum = "d844526125b93aa259e111716a4112e22a43767841d60b7af088b39c9438c8b0"
 dependencies = [
  "rust-pptx",
  "serde",

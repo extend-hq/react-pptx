@@ -1,6 +1,6 @@
 {
   "name": "@extend-ai/react-pptx",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Browser-native, virtualized React viewer for PowerPoint (PPTX, PPT) and OpenDocument (ODP, ODG) presentations",
   "type": "module",
   "sideEffects": [

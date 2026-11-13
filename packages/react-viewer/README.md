@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@extend-ai/react-pptx.svg)](https://www.npmjs.com/package/@extend-ai/react-pptx)
 
-Browser-native PowerPoint viewing for React.
+Browser-native PowerPoint viewing for React, with **experimental OpenDocument support**.
 
 ```bash
 npm install @extend-ai/react-pptx
@@ -90,6 +90,19 @@ The repository regression suite opens a real three-slide PowerPoint 97–2003 fi
 `tests/fixtures/legacy/file-example-250kb.ppt` directly in Rust and the playground. It
 checks slide order, text, normalized nodes, thumbnail navigation, and diagnostics without
 a conversion step.
+
+### Experimental OpenDocument support
+
+OpenDocument presentations (`.odp`, `.otp`, `.fodp`) and drawings (`.odg`, `.otg`, `.fodg`)
+are accepted by the same `source` prop and `parsePresentation()` API. The Rust/Wasm parser
+detects the format from the bytes and returns `document.format` as `odp` or `odg`. Drawing
+pages are displayed as slides. These formats are view only.
+
+Supported charts render from their data, and custom drawing shapes use enhanced geometry
+where supported. **Support is experimental:** rendering fidelity varies, especially for
+chart layouts and custom shapes, and some content remains unsupported. See the
+[OpenDocument support guide](https://github.com/extend-hq/react-pptx/blob/main/docs/opendocument.md)
+for details.
 
 ## WebAssembly asset
 
@@ -306,7 +319,7 @@ slides. The built-in `showThumbnails` filmstrip follows the same windowed behavi
 
 ## Block and word citations
 
-Version 0.6.0 bundles the Rust 0.4.0 parser and block extractor, with rust-odf 0.1.0, rust-office-art 0.1.8 and rust-office-charts 0.1.10. Call `extractPresentationBlocks(parsed.document, { includeWords: true })`, then pass its blocks or words to `PptxBlockHighlights` or `PptxWordHighlights`. The components accept a viewer `rootRef`, selected target, optional multiple targets, color and an `onGeometry` callback for the selected target, following the React DOCX API.
+The bundled runtime uses the Rust 0.4.1 parser and block extractor, with rust-odf 0.2.0, rust-office-art 0.1.9 and rust-office-charts 0.2.0. Call `extractPresentationBlocks(parsed.document, { includeWords: true })`, then pass its blocks or words to `PptxBlockHighlights` or `PptxWordHighlights`. The components accept a viewer `rootRef`, selected target, optional multiple targets, color and an `onGeometry` callback for the selected target, following the React DOCX API.
 
 `resolvePptxSourceGeometry`, `resolvePptxBlockGeometries` and `resolvePptxWordGeometries` return axis-aligned slide-relative fragments with explicit rendered, unmounted, invisible or unresolved states. `revealPptxSource(controller, root, ref)` mounts and navigates to the referenced slide. `normalizedPptxBoundingBox` converts a fragment to fractional slide coordinates.
 

@@ -1,9 +1,9 @@
 # Third-party notices
 
-## PowerPoint parsing and chart rendering
+## Office parsing and chart rendering
 
-The browser runtime bundles the PowerPoint parser, shared OfficeArt renderer,
-and chart renderer from [rust-office](https://github.com/extend-hq/rust-office).
+The browser runtime bundles the PowerPoint parser, OpenDocument parser, shared
+OfficeArt renderer, and chart renderer from [rust-office](https://github.com/extend-hq/rust-office).
 Their MIT license is included in the published package at
 `THIRD_PARTY_LICENSES/extend-office.txt`.
 

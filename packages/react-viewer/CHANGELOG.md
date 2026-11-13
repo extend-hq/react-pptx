@@ -1,5 +1,17 @@
 # @extend-ai/react-pptx
 
+## 0.6.0
+
+### Minor Changes
+
+- fbb6e5e: Add experimental support for OpenDocument presentations and drawings (`.odp`, `.otp`, `.fodp`, `.odg`, `.otg`, `.fodg`). They are detected from their bytes, parsed by the bundled Rust parser into the same presentation model as PowerPoint files, and reported as the new `odp` and `odg` values of `PresentationFormat`. They are view only, and rendering fidelity varies, especially for charts and custom drawing geometry. See `docs/opendocument.md` for supported features and limitations.
+
+  `PresentationFormat` gains `'odp'` and `'odg'`; code that switches on it exhaustively needs the new cases. `isPresentationFormat` and `PRESENTATION_FORMATS` are exported for checking a format value.
+
+### Patch Changes
+
+- Update the bundled Rust PPTX/WASM runtime to 0.4.1 with OpenDocument 0.2.0, Office Art 0.1.9 and Office Charts 0.2.0. Render supported OpenDocument charts and enhanced drawing geometry while retaining chart styles, scatter/bubble domains and cached data for downstream extraction.
+
 ## 0.5.0
 
 ### Minor Changes

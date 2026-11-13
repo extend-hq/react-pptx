@@ -1,5 +1,8 @@
 # OpenDocument support
 
+**OpenDocument support is experimental.** Rendering fidelity varies, especially for chart
+layouts and custom drawing geometry. These formats are view only.
+
 OpenDocument presentations and drawings are parsed by the same Rust/Wasm pipeline as PowerPoint
 files and rendered from the same `PresentationDocument` model. The runtime does not invoke
 LibreOffice, upload the file to a conversion service, or first rewrite it as `.pptx`.
@@ -31,12 +34,17 @@ gradient and bitmap fills, outlines and speaker notes. Master-page decorations a
 slide, and the master's footer, slide-number and fixed-date fields are filled in on slides that
 display them.
 
+Supported custom shapes evaluate enhanced-geometry formulas and paths. Embedded charts use
+a saved preview when available; otherwise, supported charts render to SVG from their data.
+Chart styles, scatter/bubble domains and cached values are retained for downstream extraction.
+
 ## What is not
 
-- A custom shape whose outline needs formula evaluation is drawn as a rectangle, with a
+- A custom shape whose geometry cannot be evaluated falls back to an approximation, with a
   `shape-geometry-approximated` warning.
-- An embedded chart is drawn from its saved preview image. A chart saved without a preview a
-  browser can draw carries its data but draws nothing.
+- Chart layouts and custom geometry do not yet fully match the originating application.
+  Unsupported charts may use a saved preview; chart data can remain available even when
+  the chart cannot be drawn.
 - Audio and video, animations, transitions and slide comments are not read.
 - Image cropping and hatch fills are ignored.
 
