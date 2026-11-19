@@ -1,9 +1,14 @@
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const upstream = process.env.RUST_OFFICE_PATH;
-const crate = upstream ? resolve(upstream, 'crates/rust-pptx-wasm') : root;
+let crate = root;
+if (upstream) {
+  const dukeCrate = resolve(upstream, 'crates/duke-slides-wasm');
+  crate = existsSync(dukeCrate) ? dukeCrate : resolve(upstream, 'crates/rust-pptx-wasm');
+}
 const result = spawnSync(
   'wasm-pack',
   [

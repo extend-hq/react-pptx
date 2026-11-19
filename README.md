@@ -51,7 +51,7 @@ The [playground](https://react-pptx-alpha.vercel.app/) opens PPTX files in edit 
 | Playground and validation | [apps/playground](apps/playground), [tests](tests), [fidelity harness](docs/fidelity-harness.md) |
 | Architecture and releases | [Architecture](docs/architecture.md), [release guide](docs/releasing.md) |
 
-Parser and shared rendering fixes belong in [Rust Office](https://github.com/extend-hq/rust-office); this repository owns the browser adapter and React rendering. The private native-reference corpus uses `pnpm powerpoint-oracle:validate` and `pnpm powerpoint-oracle:compare`.
+Parser and shared rendering fixes belong in [Duke Office](https://github.com/extend-hq/duke-office); this repository owns the browser adapter and React rendering. The private native-reference corpus uses `pnpm powerpoint-oracle:validate` and `pnpm powerpoint-oracle:compare`.
 
 ## Rendering boundaries
 
