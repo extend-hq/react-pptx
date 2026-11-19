@@ -1,1 +1,1 @@
-pub use rust_pptx_wasm::*;
+pub use duke_slides_wasm::*;

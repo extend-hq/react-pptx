@@ -3,9 +3,11 @@
 ## Office parsing and chart rendering
 
 The browser runtime bundles the PowerPoint parser, OpenDocument parser, shared
-OfficeArt renderer, and chart renderer from [rust-office](https://github.com/extend-hq/rust-office).
+OfficeArt renderer, and chart renderer from [Duke Office](https://github.com/extend-hq/duke-office).
 Their MIT license is included in the published package at
 `THIRD_PARTY_LICENSES/extend-office.txt`.
+
+The embedded font data is covered by the notices in `THIRD_PARTY_LICENSES/office-fonts.txt`.
 
 The shared OfficeArt renderer includes preset geometry definitions from
 [Apache POI](https://poi.apache.org/) under the Apache License 2.0.

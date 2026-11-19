@@ -1,8 +1,8 @@
-use rust_pptx::{parse_presentation, FillStyle, ParseLimits, PresentationFormat, SlideNode};
+use duke_slides::{parse_presentation, FillStyle, ParseLimits, PresentationFormat, SlideNode};
 
 const LEGACY_DECK: &[u8] = include_bytes!("fixtures/legacy/file-example-250kb.ppt");
 
-fn document_text(document: &rust_pptx::PresentationDocument) -> String {
+fn document_text(document: &duke_slides::PresentationDocument) -> String {
     document
         .slides
         .iter()

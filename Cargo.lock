@@ -190,6 +190,104 @@ dependencies = [
 ]
 
 [[package]]
+name = "duke-odf"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d33ff3c471ec7060af818515246eee83fd4c007853b3a9ad0106d30f7eed3b6"
+dependencies = [
+ "base64",
+ "encoding_rs",
+ "memchr",
+ "miniz_oxide",
+ "quick-xml",
+ "zlib-rs",
+]
+
+[[package]]
+name = "duke-office-art"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "716210e2f4f8cbdd2776532f69f9efce4ea9b28fe241614bd2d2d90d3b9c95ca"
+dependencies = [
+ "base64",
+ "duke-odf",
+ "image",
+ "kurbo",
+ "libm",
+ "memchr",
+ "quick-xml",
+ "roxmltree",
+ "rustybuzz",
+ "serde",
+ "serde_bytes",
+]
+
+[[package]]
+name = "duke-office-charts"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1696be95ad88cc4cd22a9118f564d70a1e16c7e3debf3b716de4f3dcbaa8f214"
+dependencies = [
+ "base64",
+ "duke-odf",
+ "duke-office-art",
+ "kurbo",
+ "miniz_oxide",
+ "quick-xml",
+ "roxmltree",
+ "serde",
+ "svgtypes",
+]
+
+[[package]]
+name = "duke-slides"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6deab40ed65e54346e1a1811bd29413197dd076f70d4ef87e8c86c5e46f1ac66"
+dependencies = [
+ "base64",
+ "base64-simd",
+ "cfb",
+ "compact_str",
+ "duke-odf",
+ "duke-office-art",
+ "duke-office-charts",
+ "flate2",
+ "itoa",
+ "memchr",
+ "quick-xml",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "unicode-segmentation",
+ "zip",
+]
+
+[[package]]
+name = "duke-slides-wasm"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c9f4efe8850f3035cabf515a29049e21b64a5e22870816670a3c5de1ba7237"
+dependencies = [
+ "duke-slides",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -541,8 +639,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 name = "react-pptx-runtime"
 version = "0.1.0"
 dependencies = [
- "rust-pptx",
- "rust-pptx-wasm",
+ "duke-slides",
+ "duke-slides-wasm",
 ]
 
 [[package]]
@@ -550,92 +648,6 @@ name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
-
-[[package]]
-name = "rust-odf"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31bd441ed53bc485e9fe8f9335c29fa52bd808d6fa137e5b75315f0c78995581"
-dependencies = [
- "base64",
- "memchr",
- "miniz_oxide",
- "quick-xml",
- "zlib-rs",
-]
-
-[[package]]
-name = "rust-office-art"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f27c4afe14a36fd77f51834ac582d84b4a94699c966888e107ecf255bde27eff"
-dependencies = [
- "base64",
- "image",
- "kurbo",
- "libm",
- "memchr",
- "quick-xml",
- "roxmltree",
- "rust-odf",
- "rustybuzz",
- "serde",
- "serde_bytes",
-]
-
-[[package]]
-name = "rust-office-charts"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b358d5dc40bd98842bb545a510bc780d092230c4afcd00ddedb3a2c2f72144e"
-dependencies = [
- "base64",
- "kurbo",
- "miniz_oxide",
- "roxmltree",
- "rust-odf",
- "rust-office-art",
- "serde",
- "svgtypes",
-]
-
-[[package]]
-name = "rust-pptx"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed4ce03c266d4a1542f102c2f5fec7cad416d5932bb4ccfec847765c5dc5531b"
-dependencies = [
- "base64",
- "base64-simd",
- "cfb",
- "compact_str",
- "flate2",
- "memchr",
- "quick-xml",
- "rust-odf",
- "rust-office-art",
- "rust-office-charts",
- "serde",
- "serde_bytes",
- "serde_json",
- "sha2",
- "thiserror",
- "unicode-segmentation",
- "zip",
-]
-
-[[package]]
-name = "rust-pptx-wasm"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d844526125b93aa259e111716a4112e22a43767841d60b7af088b39c9438c8b0"
-dependencies = [
- "rust-pptx",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "wasm-bindgen",
-]
 
 [[package]]
 name = "rustversion"

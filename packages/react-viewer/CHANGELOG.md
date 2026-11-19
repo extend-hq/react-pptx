@@ -1,5 +1,11 @@
 # @extend-ai/react-pptx
 
+## 0.6.1
+
+### Patch Changes
+
+- Update to Duke Slides 0.5.9 for external picture relationships, sparse chart data and presentation parsing.
+
 ## 0.6.0
 
 ### Minor Changes

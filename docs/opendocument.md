@@ -54,4 +54,4 @@ OpenDocument files are view only. The playground's editor saves changes into the
 package, which these files do not have.
 
 The parser side is documented in Rust Office's
-[OpenDocument input](https://github.com/extend-hq/rust-office/blob/main/docs/opendocument.md).
+[OpenDocument input](https://github.com/extend-hq/duke-office/blob/main/docs/opendocument.md).
