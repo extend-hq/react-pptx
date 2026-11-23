@@ -191,9 +191,9 @@ dependencies = [
 
 [[package]]
 name = "duke-odf"
-version = "0.3.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d33ff3c471ec7060af818515246eee83fd4c007853b3a9ad0106d30f7eed3b6"
+checksum = "e5797292051a029cbf9277e0c0d7744654013d98545936cb537c559e5a01842b"
 dependencies = [
  "base64",
  "encoding_rs",
@@ -205,9 +205,9 @@ dependencies = [
 
 [[package]]
 name = "duke-office-art"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "716210e2f4f8cbdd2776532f69f9efce4ea9b28fe241614bd2d2d90d3b9c95ca"
+checksum = "2f13cee69241da4eefc3adf844d86e9f548901bd0651fba9f67d43329788182a"
 dependencies = [
  "base64",
  "duke-odf",
@@ -224,9 +224,9 @@ dependencies = [
 
 [[package]]
 name = "duke-office-charts"
-version = "0.3.3"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1696be95ad88cc4cd22a9118f564d70a1e16c7e3debf3b716de4f3dcbaa8f214"
+checksum = "0fd6770c6af394b5a62965424783f995a3b24d9b72fb7f7c154821ddd6977f4a"
 dependencies = [
  "base64",
  "duke-odf",
@@ -241,9 +241,9 @@ dependencies = [
 
 [[package]]
 name = "duke-slides"
-version = "0.5.9"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6deab40ed65e54346e1a1811bd29413197dd076f70d4ef87e8c86c5e46f1ac66"
+checksum = "9f92dee3bb17fba6b9df8cc9bbf8af5655c2db7577e2b8b7478c001131674f03"
 dependencies = [
  "base64",
  "base64-simd",
@@ -267,9 +267,9 @@ dependencies = [
 
 [[package]]
 name = "duke-slides-wasm"
-version = "0.5.9"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13c9f4efe8850f3035cabf515a29049e21b64a5e22870816670a3c5de1ba7237"
+checksum = "7c0cdd27acbca802a46c67459377874586a6fe0f46785da188dbeae4edcca959"
 dependencies = [
  "duke-slides",
  "serde",

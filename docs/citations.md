@@ -36,7 +36,7 @@ The source identity hashes the exact input bytes. Repacking or editing creates a
 
 ## Availability and development
 
-React PPTX 0.6.1 bundles Duke Slides and its WASM bindings at 0.5.9, with Duke ODF 0.3.2, Office Art 0.2.2 and Office Charts 0.3.3. `Cargo.lock` fixes the remaining dependency versions. Older npm versions retain the parser bundled at their release. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
+React PPTX 0.6.2 bundles Duke Slides and its WASM bindings at 0.6.1, with Duke ODF 0.4.0, Office Art 0.3.0 and Office Charts 0.4.0. `Cargo.lock` fixes the remaining dependency versions. Older npm versions retain the parser bundled at their release. A development checkout can instead select local upstream sources with `RUST_OFFICE_PATH=/absolute/path/to/extend-office pnpm build:packages`.
 
 `PptxBlockHighlights` follows the DOCX highlight component's props: `block`, `blocks`, `color`, `colorForBlock` and `onGeometry` for the active block. `onGeometries` additionally reports a map for all supplied targets. `PptxWordHighlights` accepts `word` and `words` with the same active-geometry callback.
 

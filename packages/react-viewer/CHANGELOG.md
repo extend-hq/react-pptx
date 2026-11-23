@@ -1,5 +1,9 @@
 # @extend-ai/react-pptx
 
+## 0.6.2
+
+- Update the bundled Rust parser to Duke Slides 0.6.1, with Duke Office Art 0.3.0, Office Charts 0.4.0, and ODF 0.4.0.
+
 ## 0.6.1
 
 ### Patch Changes

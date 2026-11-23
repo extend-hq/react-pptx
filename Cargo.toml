@@ -10,10 +10,10 @@ crate-type = ["cdylib"]
 path = "packages/wasm/src/bridge.rs"
 
 [dependencies]
-duke-slides-wasm = "=0.5.9"
+duke-slides-wasm = "=0.6.1"
 
 [dev-dependencies]
-duke-slides = "=0.5.9"
+duke-slides = "=0.6.1"
 
 [profile.release]
 opt-level = "z"
